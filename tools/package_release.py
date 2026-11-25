@@ -33,8 +33,19 @@ def main() -> None:
     executable = release / "S3FileManager.exe"
     if not executable.is_file():
         raise SystemExit(f"Build {executable.name} before packaging the release")
-    for name, target in (("README.md", "使用说明.md"), ("CHANGELOG.md", "更新记录.md"), ("THIRD_PARTY_NOTICES.md", "第三方组件说明.md"), ("LICENSE", "LICENSE")):
+    guide_links = {"README.md": "使用说明.md", "CHANGELOG.md": "更新记录.md", "THIRD_PARTY_NOTICES.md": "第三方组件说明.md"}
+    for name in ("README.md", "README.en.md"):
+        guide = (project / name).read_text(encoding="utf-8")
+        for source_name, local_name in guide_links.items():
+            guide = guide.replace(f'"{source_name}"', f'"{local_name}"').replace(f"({source_name})", f"({local_name})")
+        (release / guide_links.get(name, name)).write_text(guide, encoding="utf-8")
+    for name, target in (("CHANGELOG.md", "更新记录.md"), ("THIRD_PARTY_NOTICES.md", "第三方组件说明.md"),
+                         ("LICENSE", "LICENSE"), ("CONTRIBUTING.md", "CONTRIBUTING.md"), ("SECURITY.md", "SECURITY.md")):
         shutil.copy2(project / name, release / target)
+    images = release / "docs" / "images"
+    images.mkdir(parents=True, exist_ok=True)
+    for name in ("logo.png", "s3-file-manager.png"):
+        shutil.copy2(project / "docs" / "images" / name, images / name)
     notices = release / "licenses"
     notices.mkdir(parents=True, exist_ok=True)
     for name in ("boto3", "botocore", "s3transfer", "jmespath", "python-dateutil", "urllib3", "six", "PySide6-Essentials", "shiboken6", "qtawesome", "QtPy", "PyInstaller", "certifi", "cryptography", "packaging"):

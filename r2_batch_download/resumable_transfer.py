@@ -10,15 +10,17 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import sqlite3
 import re
 import tempfile
 import threading
 import time
 from typing import Any, Callable
 
+from .archive import local_stamp, record_archive
 from .cli import comparison_path, destination_identity, path_conflicts, safe_destination
 from .client_transfer import _commit, _destination, _redact
-from .desktop_engine import Cancelled, Connection, create_client
+from .desktop_engine import Cancelled, Connection, create_client, strong_etag
 
 
 CHUNK_SIZE = 256 * 1024
@@ -97,22 +99,16 @@ def _partial_size(partial: Path, expected_size: int) -> int:
     return min(expected_size, max(0, partial.stat().st_size))
 
 
-def _strong_etag(value: Any) -> str:
-    # S3 ETags are opaque validators, including multipart ETags. They do not
-    # need to be MD5 hashes, but weak/unquoted validators cannot anchor resume.
-    if isinstance(value, str) and len(value) >= 2 and value.startswith('"') and value.endswith('"') and "\r" not in value and "\n" not in value:
-        return value
-    return ""
-
-
 def _identity(connection: Connection, task: dict[str, Any], head: dict[str, Any], expected_size: int) -> dict[str, Any]:
-    endpoint = connection.endpoint_url.strip().rstrip("/") or f"https://{connection.account_id.strip()}.r2.cloudflarestorage.com"
     version = head.get("VersionId", "")
-    return {
-        "format": 1, "endpoint": endpoint.lower(), "bucket": connection.bucket.strip(),
-        "key": task["key"], "size": expected_size, "etag": _strong_etag(head.get("ETag")),
+    identity = {
+        "format": 1, "endpoint": connection.endpoint.lower(), "bucket": connection.bucket.strip(),
+        "key": task["key"], "size": expected_size, "etag": strong_etag(head.get("ETag")),
         "version_id": version if isinstance(version, str) and version != "null" else "",
     }
+    if connection.provider != "r2":
+        identity.update(provider=connection.provider, region=connection.signing_region)
+    return identity
 
 
 def _save_checkpoint(path: Path, identity: dict[str, Any]) -> None:
@@ -207,6 +203,9 @@ def _download(
     try:
         _stop(cancel, pause)
         _artifact_check(root, relative, partial, checkpoint)
+        archiving = task.get("archive", False)
+        if archiving and local_stamp(destination) != task["archive_stamp"]:
+            raise FileExistsError("本地文件在归档检查后发生变化，请重新预览归档。")
         if destination.exists() and not task.get("overwrite", False):
             if destination.is_file() and destination.stat().st_size == expected_size:
                 _discard_paths(partial, checkpoint)
@@ -224,8 +223,13 @@ def _download(
                     _discard_paths(partial, checkpoint)
                     raise _ObjectChanged("远端文件大小已改变，请重新读取文件列表后创建下载任务。")
                 identity = _identity(connection, task, head, expected_size)
+                previous_etag = strong_etag(task.get("etag"))
+                if archiving and previous_etag and previous_etag != identity["etag"]:
+                    raise _ObjectChanged("远端对象在归档检查后发生变化，请刷新后重新预览归档。")
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 _artifact_check(root, relative, partial, checkpoint)
+                if archiving and local_stamp(destination) != task["archive_stamp"]:
+                    raise FileExistsError("本地文件在归档期间发生变化，已保留该文件。请重新预览归档。")
                 progress(0, force=True)
                 offset = _resume_offset(partial, checkpoint, identity)
                 on_event({"kind": "resumed", "id": task_id, "transferred": offset})
@@ -274,11 +278,18 @@ def _download(
                 if partial.stat().st_size != expected_size:
                     raise _ProtocolError("分片大小校验失败，文件未提交。")
                 _artifact_check(root, relative, partial, checkpoint)
+                if archiving and local_stamp(destination) != task["archive_stamp"]:
+                    raise FileExistsError("本地文件在归档期间发生变化，已保留该文件。请重新预览归档。")
                 if not task.get("overwrite", False) and destination.exists():
                     raise FileExistsError("下载期间本地出现同名文件，已保留该文件。")
                 _commit(partial, destination, bool(task.get("overwrite", False)))
                 checkpoint.unlink(missing_ok=True)
                 progress(0, force=True)
+                if archiving:
+                    try:
+                        record_archive(task, destination, identity["etag"])
+                    except (OSError, ValueError, sqlite3.Error) as exc:
+                        return result("completed", expected_size, error=f"已保存文件。归档记录更新失败：{exc}")
                 return result("completed", expected_size)
             except (Cancelled, _Paused):
                 raise

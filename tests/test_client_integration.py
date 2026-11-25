@@ -23,10 +23,11 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 from PySide6.QtCore import QCoreApplication, QEvent, QTimer, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+from botocore.exceptions import ClientError
 from botocore.response import StreamingBody
 
-from r2_batch_download import client, client_store
-from r2_batch_download import resumable_transfer
+from r2_batch_download import archive, client, client_store
+from r2_batch_download import resumable_transfer, upload
 from r2_batch_download.ui import FileCard, app_style
 
 
@@ -128,6 +129,54 @@ class _OfflineS3:
 
     def close(self) -> None:
         self.close_calls += 1
+
+
+class _OfflineUploadS3(_OfflineS3):
+    def __init__(self, payloads: dict[str, bytes]) -> None:
+        super().__init__(payloads)
+        self.put_calls: list[tuple[str, str, bytes]] = []
+        self.deny = set()
+
+    def head_object(self, *, Bucket: str, Key: str, **kwargs) -> dict:
+        if Key not in self.payloads:
+            raise ClientError({"Error": {"Code": "404"}}, "HeadObject")
+        return super().head_object(Bucket=Bucket, Key=Key, **kwargs)
+
+    def put_object(self, *, Bucket: str, Key: str, Body, ContentLength: int, ContentMD5: str,
+                   ContentType: str, IfMatch: str = "", IfNoneMatch: str = "") -> dict:
+        content = b"".join(iter(lambda: Body.read(4), b""))
+        if len(content) != ContentLength or not ContentMD5 or not ContentType:
+            raise AssertionError("Incorrect upload body metadata")
+        with self.lock:
+            self.put_calls.append((Key, IfMatch or IfNoneMatch, content))
+            if Key in self.deny:
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "PutObject")
+            if (IfNoneMatch == "*" and Key in self.payloads) or (IfMatch and Key not in self.payloads):
+                raise ClientError({"Error": {"Code": "412"}}, "PutObject")
+            self.payloads[Key] = content
+        return {"ETag": '"offline-etag"'}
+
+
+class _OfflineArchiveS3(_OfflineS3):
+    etag = '"offline-etag"'
+
+    def paginate(self, **arguments):
+        for page in super().paginate(**arguments):
+            for row in page["Contents"]:
+                row["ETag"] = self.etag
+            yield page
+
+    def head_object(self, **arguments):
+        response = super().head_object(**arguments)
+        response["ETag"] = self.etag
+        return response
+
+    def get_object(self, **arguments):
+        if arguments.get("IfMatch") != self.etag:
+            raise AssertionError(arguments)
+        response = super().get_object(**{**arguments, "IfMatch": '"offline-etag"'})
+        response["ETag"] = self.etag
+        return response
 
 
 class ClientWorkflowTests(unittest.TestCase):
@@ -250,6 +299,123 @@ class ClientWorkflowTests(unittest.TestCase):
         self.assertTrue(target.writer.flush(5))
         return json.loads(self.state_file.read_text(encoding="utf-8"))
 
+    def test_archive_rereads_remote_etag_and_remembers_after_history_clear(self) -> None:
+        s3 = _OfflineArchiveS3({"archive.txt": b"v1"})
+        self.connect_and_scan(s3)
+        self.enterContext(patch.object(archive, "state_path", return_value=self.state_file))
+        self.output.mkdir()
+        local_only = self.output / "local.txt"
+        local_only.write_bytes(b"keep")
+        dialog_exec = client.DownloadDialog.exec
+        previews = []
+
+        def accept_preview(dialog: client.DownloadDialog) -> int:
+            dialog.destination.setText(str(self.output))
+            poll = QTimer(dialog)
+
+            def ready() -> None:
+                if dialog.confirm_button.isEnabled():
+                    poll.stop()
+                    previews.append(dialog.check_status.text())
+                    dialog.confirm_button.click()
+                elif "没有需要下载的变更" in dialog.check_status.text():
+                    poll.stop()
+                    previews.append(dialog.check_status.text())
+                    dialog.reject()
+
+            poll.timeout.connect(ready)
+            poll.start(20)
+            timeout = QTimer(dialog)
+            timeout.setSingleShot(True)
+            timeout.timeout.connect(dialog.reject)
+            timeout.start(3000)
+            result = dialog_exec(dialog)
+            poll.stop()
+            timeout.stop()
+            return result
+
+        with patch.object(client.DownloadDialog, "exec", accept_preview):
+            self.window.create_download(True, archive=True)
+            self.until(lambda: self.window.tasks and not self.window.transfer_running)
+            self.assertEqual(self.window.tasks[0]["status"], "completed")
+            self.assertEqual((self.output / "archive.txt").read_bytes(), b"v1")
+            self.window.clear_tasks()
+            self.window.switch_page(0)
+            self.window.create_download(True, archive=True)
+            self.assertEqual(self.window.tasks, [])
+            self.assertIn("没有需要下载的变更", previews[1])
+            s3.payloads["archive.txt"] = b"v2"
+            s3.etag = '"changed"'
+            self.window.create_download(True, archive=True)
+            self.until(lambda: self.window.tasks and not self.window.transfer_running)
+            self.assertEqual(self.window.tasks[0]["status"], "completed")
+            self.assertEqual((self.output / "archive.txt").read_bytes(), b"v2")
+            self.assertIn("已有同名文件 1 个", previews[2])
+            self.window.clear_tasks()
+            self.window.switch_page(0)
+            (self.output / "archive.txt").unlink()
+            self.window.create_download(True, archive=True)
+            self.until(lambda: self.window.tasks and not self.window.transfer_running)
+        self.assertEqual((self.output / "archive.txt").read_bytes(), b"v2")
+        self.assertEqual(local_only.read_bytes(), b"keep")
+        self.assertEqual(s3.attempts, {"archive.txt": 3})
+
+    def test_upload_dialog_conflicts_atomic_writes_and_reopen(self) -> None:
+        s3 = _OfflineUploadS3({"archive/assets/existing.txt": b"original"})
+        self.connect_and_scan(s3)
+        self.enterContext(patch.object(upload, "create_client", return_value=s3))
+        self.window.navigate("archive/")
+        selected = self.root / "assets"
+        selected.mkdir()
+        for name, content in (("existing.txt", b"replacement"), ("new.txt", b"new file"),
+                              ("raced.txt", b"raced file"), ("denied.txt", b"denied file")):
+            (selected / name).write_bytes(content)
+        s3.deny.add("archive/assets/denied.txt")
+        dialog_exec = client.UploadDialog.exec
+        observed = []
+
+        def choose_folder_and_confirm(dialog: client.UploadDialog) -> int:
+            dialog.check_sources((selected,))
+            timer = QTimer(dialog)
+
+            def confirm_ready() -> None:
+                if not dialog.submit_button.isEnabled():
+                    return
+                observed.append((dialog.note.text(), dialog.conflicts))
+                s3.payloads["archive/assets/raced.txt"] = b"another writer"
+                dialog.submit_button.click()
+
+            timer.timeout.connect(confirm_ready)
+            timer.start(20)
+            timeout = QTimer(dialog)
+            timeout.setSingleShot(True)
+            timeout.timeout.connect(dialog.reject)
+            timeout.start(3000)
+            return dialog_exec(dialog)
+
+        with patch.object(client.UploadDialog, "exec", choose_folder_and_confirm):
+            self.window.upload_button.click()
+        self.assertEqual(len(observed), 1)
+        self.assertIn("跳过 1 个同名对象", observed[0][0])
+        self.assertEqual(observed[0][1], 1)
+        self.until(lambda: len(self.window.tasks) == 3 and not self.window.transfer_running)
+        self.assertEqual(s3.payloads, {"archive/assets/existing.txt": b"original",
+                                      "archive/assets/raced.txt": b"another writer",
+                                      "archive/assets/new.txt": b"new file"})
+        self.assertEqual({condition for _, condition, _ in s3.put_calls}, {"*"})
+        tasks = {task["name"]: task for task in self.stored()["tasks"]}
+        self.assertEqual(tasks["new.txt"]["status"], "completed")
+        self.assertIn("发生变化", tasks["raced.txt"]["error"])
+        self.assertIn("写入权限", tasks["denied.txt"]["error"])
+        self.window.switch_page(0)
+        self.until(lambda: not self.window.loading and any(row["key"] == "archive/assets/new.txt"
+                                                           for row in self.window.files[self.window.bucket_id]))
+        restarted = self.new_window()
+        self.assertEqual({task["direction"] for task in restarted.tasks}, {"upload"})
+        restarted.clear_tasks()
+        self.assertEqual((selected / "new.txt").read_bytes(), b"new file")
+        self.assertEqual(s3.payloads["archive/assets/new.txt"], b"new file")
+
     def test_directory_pages_and_navigation_work_before_the_full_scan_completes(self) -> None:
         s3 = _OfflineS3({"folder/first.txt": b"first", "folder/second.txt": b"second", "root.txt": b"root"})
         s3.scan_gate = threading.Event()
@@ -300,10 +466,14 @@ class ClientWorkflowTests(unittest.TestCase):
         records = self.stored()["tasks"]
         self.assertEqual({row["key"] for row in records}, set(expected))
         self.assertTrue(all(row["status"] == "completed" and row["transferred"] == row["size"] for row in records))
+        batch_id = records[0]["batch_id"]
+        self.assertTrue(batch_id)
+        self.assertEqual({row["batch_id"] for row in records}, {batch_id})
         self.assertNotIn("offline-private-secret", self.state_file.read_text(encoding="utf-8"))
 
         restarted = self.new_window()
         self.assertEqual(len(restarted.tasks), 2)
+        self.assertEqual(restarted.batch_selector.findData(batch_id), 1)
         self.assertTrue(all(task["status"] == "completed" for task in restarted.tasks))
         self.assertEqual(restarted.profiles[0]["secret_access_key"], "")
         self.assertFalse(restarted.transfer_running)
@@ -333,9 +503,11 @@ class ClientWorkflowTests(unittest.TestCase):
         self.assertEqual(len(list(self.output.glob("**/*.part"))), 1)
         self.assertEqual(failed["transferred"], resumable_transfer.CHUNK_SIZE * 3)
 
-        task_id = failed["id"]
         s3.failures.clear()
-        self.window.retry_task(task_id)
+        self.window.render_tasks()
+        self.assertEqual(self.window.batch_selector.currentData(), failed["batch_id"])
+        self.assertTrue(self.window.batch_retry.isEnabled())
+        self.window.batch_retry.click()
         self.until(lambda: not self.window.transfer_running and all(task["status"] == "completed" for task in self.window.tasks))
         self.assertEqual(s3.attempts, {"folder/a.txt": 4, "folder/b.txt": 1})
         self.assertEqual(s3.get_calls[-1]["Range"], f"bytes={resumable_transfer.CHUNK_SIZE * 3}-")

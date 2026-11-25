@@ -32,6 +32,22 @@ class Connection:
     secret_access_key: str = field(repr=False)
     bucket: str
     endpoint_url: str = ""
+    provider: str = "r2"
+    region: str = ""
+
+    @property
+    def endpoint(self) -> str:
+        return self.endpoint_url.strip().rstrip("/") or f"https://{self.account_id.strip()}.r2.cloudflarestorage.com"
+
+    @property
+    def signing_region(self) -> str:
+        if self.provider == "r2":
+            return "auto"
+        if self.provider == "b2":
+            host = urlsplit(self.endpoint).hostname or ""
+            match = re.fullmatch(r"s3\.([a-z0-9-]+)\.backblazeb2\.com", host)
+            return match.group(1) if match else ""
+        return self.region.strip()
 
 
 @dataclass(frozen=True)
@@ -46,12 +62,21 @@ class DownloadOptions:
 EventCallback = Callable[[dict[str, Any]], None]
 
 
+def strong_etag(value: Any) -> str:
+    # Multipart ETags are valid opaque validators as well.
+    return value if isinstance(value, str) and re.fullmatch(r'"[^"\r\n]+"', value) else ""
+
+
 def validate_connection(connection: Connection) -> None:
     """Validate user input without opening a connection or reading env vars."""
-    if not connection.account_id.strip() and not connection.endpoint_url.strip():
+    if connection.provider not in {"r2", "b2", "s3"}:
+        raise ValueError("请选择支持的存储服务。")
+    if connection.provider == "r2" and not connection.account_id.strip() and not connection.endpoint_url.strip():
         raise ValueError("请填写 Cloudflare Account ID 或完整的 R2 S3 endpoint。")
+    if connection.provider != "r2" and not connection.endpoint_url.strip():
+        raise ValueError("请填写服务商的 HTTPS S3 Endpoint。")
     if not connection.access_key_id.strip():
-        raise ValueError("请填写 R2 Access Key ID。")
+        raise ValueError("请填写 Access Key ID。")
     if not connection.secret_access_key.strip():
         raise ValueError("请填写对应的 Secret Access Key。")
     bucket = connection.bucket.strip()
@@ -77,32 +102,39 @@ def validate_connection(connection: Connection) -> None:
         except ValueError:
             valid = False
         if not valid:
-            raise ValueError("R2 endpoint 必须为完整的 HTTPS S3 地址，且不能包含 Bucket 路径、查询参数或登录信息。")
+            raise ValueError("Endpoint 必须为完整的 HTTPS S3 地址，且不能包含 Bucket 路径、查询参数或登录信息。")
     elif not re.fullmatch(r"[A-Za-z0-9]+", connection.account_id.strip()):
         raise ValueError("Account ID 请填写账户 ID；如果提供的是完整网址，请填入 R2 endpoint。")
+    if connection.provider == "b2" and not connection.signing_region:
+        raise ValueError("B2 Endpoint 示例为 https://s3.us-west-004.backblazeb2.com，请使用存储桶页面显示的地址。")
+    if connection.provider == "s3" and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", connection.signing_region):
+        raise ValueError("请填写服务商的 S3 区域，例如 us-east-1。")
 
 
-def create_client(connection: Connection, workers: int = 4) -> Any:
+def create_client(connection: Connection, workers: int = 4, *, upload: bool = False) -> Any:
     validate_connection(connection)
     import boto3
     from botocore.config import Config
 
-    endpoint = connection.endpoint_url.strip().rstrip("/") or (
-        f"https://{connection.account_id.strip()}.r2.cloudflarestorage.com"
-    )
+    s3_options = {"addressing_style": "path"}
+    upload_options = {}
+    if upload:
+        s3_options["payload_signing_enabled"] = False  # HTTPS and Content-MD5 protect the body.
+        upload_options["request_checksum_calculation"] = "when_required"
     return boto3.client(
         "s3",
-        endpoint_url=endpoint,
+        endpoint_url=connection.endpoint,
         aws_access_key_id=connection.access_key_id.strip(),
         aws_secret_access_key=connection.secret_access_key.strip(),
-        region_name="auto",
+        region_name=connection.signing_region,
         config=Config(
             signature_version="s3v4",
-            s3={"addressing_style": "path"},
-            retries={"max_attempts": 3, "mode": "standard"},
+            s3=s3_options,
+            retries={"max_attempts": 0 if upload else 3, "mode": "standard"},
             connect_timeout=10,
             read_timeout=20,
             max_pool_connections=max(4, workers),
+            **upload_options,
         ),
     )
 

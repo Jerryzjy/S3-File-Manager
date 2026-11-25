@@ -142,7 +142,7 @@ class CatalogIndex:
         """Return a cached, folder-first direct-level list. Do not mutate it."""
         return self._children.get(self._directory(prefix), self._EMPTY)
 
-    def search(self, query: str) -> list[dict[str, Any]]:
+    def search(self, query: str, *, cancel: threading.Event | None = None) -> list[dict[str, Any]]:
         """Find files by a case-insensitive substring anywhere in this bucket."""
         if not isinstance(query, str):
             raise TypeError("query must be a string")
@@ -154,7 +154,7 @@ class CatalogIndex:
         result = []
         for position, (key, entry) in enumerate(self._folded_keys):
             if position % 1000 == 0:
-                self._check_cancelled()
+                self._check_cancelled(cancel)
             if folded in key:
                 result.append(entry)
         with self._search_lock:

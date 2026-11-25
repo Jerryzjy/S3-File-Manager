@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import csv
 import os
 from pathlib import Path
 import tempfile
@@ -14,7 +15,7 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit, QPushButton
 
 from r2_batch_download import client
 
@@ -170,6 +171,50 @@ class ClientUiTests(unittest.TestCase):
         self.assertEqual(window.tasks, [])
         self.toast.assert_called_once()
 
+    def test_batch_actions_and_failure_csv_respect_batch_scope(self) -> None:
+        self.state["profiles"] = [self._profile()]
+        self.state["tasks"] = [
+            dict(self._task("waiting", "queued"), batch_id="one"),
+            dict(self._task("failed", "failed"), batch_id="one", key="=1+1", error="连接中断"),
+            dict(self._task("complete", "completed"), batch_id="one"),
+            dict(self._task("other", "queued"), batch_id="two"),
+            self._task("legacy", "interrupted"),
+        ]
+        window = self._make_window()
+        window.profiles[0]["secret_access_key"] = "test-s3-secret"
+        window.switch_page(1)
+        window.batch_selector.setCurrentIndex(window.batch_selector.findData("one"))
+        self.assertEqual(set(window.task_widgets), {"waiting", "failed", "complete"})
+        self.assertEqual(window.batch_progress.value(), 333)
+        window.batch_pause.click()
+        self.assertEqual(window.task_by_id["waiting"]["status"], "paused")
+        self.assertEqual(window.task_by_id["other"]["status"], "queued")
+        window.batch_resume.click()
+        self.assertEqual(window.task_by_id["waiting"]["status"], "queued")
+        window.handle_event({"id": "other", "kind": "progress", "bytes": 5})
+        window.handle_event({"id": "waiting", "kind": "progress", "bytes": 2})
+        window.render_tasks()
+        self.assertEqual(window.batch_progress.value(), 467)
+
+        with tempfile.TemporaryDirectory() as destination:
+            path = Path(destination) / "failures.csv"
+            with patch.object(client.QFileDialog, "getSaveFileName", return_value=(str(path), "")):
+                window.batch_export.click()
+            _DeferredThread.instances[-1].complete()
+            # Deliver the export event without polling and starting a queued transfer.
+            window.handle_event(window.events.get_nowait())
+            with path.open(encoding="utf-8-sig", newline="") as stream:
+                rows = list(csv.reader(stream))
+            self.assertEqual(rows, [["存储桶", "对象 Key", "任务状态", "失败原因"],
+                                    ["my-real-bucket", "'=1+1", "失败", "连接中断"]])
+
+        window.batch_retry.click()
+        self.assertEqual(window.task_by_id["failed"]["status"], "queued")
+        self.assertEqual(window.task_by_id["complete"]["status"], "completed")
+        self.assertEqual(window.task_by_id["legacy"]["status"], "interrupted")
+        window.batch_selector.setCurrentIndex(window.batch_selector.findData(""))
+        self.assertEqual(list(window.task_widgets), ["legacy"])
+
     def test_bucketwide_search_disables_directory_scope_download(self) -> None:
         self.state["profiles"] = [self._profile()]
         window = self._make_window()
@@ -182,6 +227,68 @@ class ClientUiTests(unittest.TestCase):
         self._flush()
         self.assertFalse(window.download_all_button.isEnabled())
         self.assertIn("搜索", window.download_all_button.toolTip())
+
+    def test_directory_filters_sort_before_pagination_and_limit_download_scope(self) -> None:
+        self.state["profiles"] = [self._profile()]
+        window = self._make_window()
+        window.PAGE_SIZE = 1
+        window.loaded.add(window.bucket_id)
+        window.files[window.bucket_id] = [
+            {"key": "folder/z-small.PDF", "size": 20, "modified": "2026-11-25T23:30:00Z"},
+            {"key": "folder/sub/a-large.pdf", "size": 500, "modified": "2026-11-26T00:30:00+01:00"},
+            {"key": "folder/sub/old.pdf", "size": 90, "modified": "2026-11-24T00:00:00Z"},
+            {"key": "folder/sub/ignore.png", "size": 60, "modified": "2026-11-25T00:00:00Z"},
+            {"key": "folder-similar/outside.pdf", "size": 70, "modified": "2026-11-25T00:00:00Z"},
+        ]
+        window.navigate("folder/")
+        window.search_scope.setCurrentIndex(1)
+        dialog = Mock()
+        dialog.exec.return_value = QDialog.DialogCode.Accepted
+        day = client.date(2026, 11, 25)
+        dialog.filters = client.FileFilters((".pdf",), 20, 500, day, day)
+        with patch.object(client, "FileFilterDialog", return_value=dialog):
+            window.filter_button.click()
+        window.set_view("list")
+        header = window.table.horizontalHeader()
+        header.sectionClicked.emit(1)
+        self.assertEqual([entry["key"] for entry in window.visible_entries], ["folder/z-small.PDF"])
+        window.toggle_select_all()
+        window.file_next.click()
+        self.assertEqual([entry["key"] for entry in window.visible_entries], ["folder/sub/a-large.pdf"])
+        window.toggle_select_all()
+        header.sectionClicked.emit(1)
+        self.assertEqual([entry["key"] for entry in window.visible_entries], ["folder/sub/a-large.pdf"])
+        self.assertEqual({entry["key"] for entry in window.selected_files()},
+                         {"folder/z-small.PDF", "folder/sub/a-large.pdf"})
+        self.assertFalse(window.download_all_button.isEnabled())
+        with patch.object(client, "DownloadDialog") as download:
+            window.create_download(whole_directory=True)
+        download.assert_not_called()
+        window.search_scope.setCurrentIndex(0)
+        self.assertFalse(window.selected)
+        self.assertIn("folder-similar/outside.pdf", {entry["key"] for entry in window.all_entries})
+
+    def test_file_details_expose_literal_key_and_copy_it(self) -> None:
+        self.state["profiles"] = [self._profile()]
+        window = self._make_window()
+        window.loaded.add(window.bucket_id)
+        key = "folder/literal <tag> & name.txt"
+        window.files[window.bucket_id] = [{"key": key, "size": 2500, "ETag": '"sample"'}]
+        window.navigate("folder/")
+        self.assertFalse(window.details_button.isEnabled())
+        window.toggle_select_all()
+        self.assertTrue(window.details_button.isEnabled())
+        clipboard = Mock()
+
+        def inspect_detail(dialog):
+            fields = {field.text() for field in dialog.findChildren(QLineEdit)}
+            self.assertTrue({key, '"sample"', "my-real-bucket"}.issubset(fields))
+            action = next(button for button in dialog.findChildren(QPushButton) if button.text() == "复制对象 Key")
+            action.click()
+
+        with patch.object(QDialog, "exec", inspect_detail), patch.object(QApplication, "clipboard", return_value=clipboard):
+            window.details_button.click()
+        clipboard.setText.assert_called_once_with(key)
 
     def test_remove_connection_persists_no_profile_cancels_scan_and_never_deletes_remote_data(self) -> None:
         self.state["profiles"] = [self._profile()]
@@ -278,6 +385,27 @@ class ClientUiTests(unittest.TestCase):
         self.assertEqual(window.tasks, [])
         self.assertEqual(window.cancel_events, {})
         self.assertEqual(window.task_connections, {})
+        self.assertEqual(self.saved[-1][1], [])
+
+    def test_clear_preserves_multipart_record_until_remote_cleanup_succeeds(self) -> None:
+        task = self._task("paused-upload", "paused")
+        task.update(direction="upload", size=64 * 1024**2, transferred=16 * 1024**2)
+        self.state["tasks"] = [task]
+        window = self._make_window()
+        with patch.object(client, "discard_upload_checkpoint", side_effect=[OSError("offline"), False]) as cleanup:
+            window.clear_tasks()
+            self.assertTrue(window.clear_when_idle)
+            self.assertEqual(set(window.upload_cleaning), {"paused-upload"})
+            _DeferredThread.instances[-1].complete()
+            window.handle_event(window.events.get_nowait())
+            self.assertFalse(window.clear_when_idle)
+            self.assertEqual(window.tasks[0]["status"], "failed")
+            self.assertIn("远端分片清理失败", self.saved[-1][1][0]["error"])
+            window.remove_task("paused-upload")
+            _DeferredThread.instances[-1].complete()
+            window.handle_event(window.events.get_nowait())
+        self.assertEqual(cleanup.call_count, 2)
+        self.assertEqual(window.tasks, [])
         self.assertEqual(self.saved[-1][1], [])
 
     def test_stale_scan_result_cannot_replace_new_scan_or_restore_removed_connection(self) -> None:

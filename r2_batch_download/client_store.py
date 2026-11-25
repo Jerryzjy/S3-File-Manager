@@ -96,6 +96,12 @@ def _profile_metadata(values: Any) -> dict[str, Any]:
     if not result["id"].strip() or not result["bucket"].strip():
         raise ValueError("连接配置缺少标识或存储桶名称。")
     result["name"] = result["name"] or result["bucket"]
+    provider = _text(values.get("provider"), "provider", "r2", limit=16)
+    if provider not in {"r2", "b2", "s3"}:
+        raise ValueError("存储服务无法识别。")
+    if provider != "r2":
+        result["provider"] = provider
+        result["region"] = _text(values.get("region"), "region", limit=64)
     result["remember_secret"] = _boolean(values.get("remember_secret"), "remember_secret", False)
     return result
 
@@ -106,6 +112,9 @@ def _task(values: Any, secret_values: tuple[str, ...] = ()) -> dict[str, Any]:
     result = {field: _text(values.get(field), field) for field in _TASK_TEXT_FIELDS}
     if not result["id"].strip() or not result["key"]:
         raise ValueError("任务记录缺少标识或对象路径。")
+    batch_id = _text(values.get("batch_id"), "batch_id", limit=64)
+    if batch_id:
+        result["batch_id"] = batch_id
     result["name"] = result["name"] or result["key"].rsplit("/", 1)[-1]
     status = _text(values.get("status"), "status", "interrupted", limit=64)
     if status not in _TASK_STATUSES:
@@ -113,6 +122,28 @@ def _task(values: Any, secret_values: tuple[str, ...] = ()) -> dict[str, Any]:
     result["status"] = status
     result["size"] = _number(values.get("size"), "size")
     result["transferred"] = _number(values.get("transferred"), "transferred")
+    direction = _text(values.get("direction"), "direction", "download", limit=12)
+    if direction == "upload":
+        if not result["path"] or values.get("source_modified_ns") is None:
+            raise ValueError("上传任务缺少本地文件信息。")
+        result["direction"] = direction
+        modified = values["source_modified_ns"]
+        if isinstance(modified, bool) or not isinstance(modified, int):
+            raise ValueError("上传任务的本地修改时间格式不正确。")
+        result["source_modified_ns"] = modified
+    elif direction == "copy":
+        result["direction"] = direction
+        result["source_key"] = _text(values.get("source_key"), "source_key")
+        if not result["source_key"] or not result["etag"]:
+            raise ValueError("复制任务缺少源对象信息。")
+    elif direction != "download":
+        raise ValueError("任务传输方向无法识别。")
+    if values.get("archive") is not None:
+        result["archive"] = _boolean(values.get("archive"), "archive", False)
+        if result["archive"]:
+            result["archive_stamp"] = _text(values.get("archive_stamp"), "archive_stamp", limit=200)
+            if not result["archive_stamp"]:
+                raise ValueError("归档任务缺少本地文件状态。")
     if result["transferred"] > result["size"]:
         raise ValueError("任务已传输字节数超出文件大小。")
     result["workers"] = _workers(values.get("workers"))
@@ -198,7 +229,7 @@ def load_state() -> dict[str, Any]:
     tasks = stored.get("tasks", [])
     if not isinstance(tasks, list):
         tasks = []
-        warnings.append("下载任务记录格式不正确，未加载任务。")
+        warnings.append("传输任务记录格式不正确，未加载任务。")
     task_ids: set[str] = set()
     credentials = _credential_values(state["profiles"])
     for values in tasks:
@@ -208,17 +239,21 @@ def load_state() -> dict[str, Any]:
                 raise ValueError("任务标识重复。")
             task_ids.add(task["id"])
         except ValueError:
-            warnings.append("部分任务记录无法读取，请重新选择文件下载。")
+            warnings.append("部分任务记录无法读取，请重新创建传输任务。")
             continue
+        was_active = task["status"] in _ACTIVE_STATUSES or task["status"] == "pausing"
         if task["status"] == "pausing":
             task["status"] = "paused"
-            task["error"] = "上次运行在暂停期间结束，点击继续后核对断点并恢复。"
+            task["error"] = ("上次运行在暂停期间结束，请点击继续上传。" if task.get("direction") == "upload"
+                             else "上次运行在暂停期间结束，点击继续后核对断点并恢复。")
         elif task["status"] in _ACTIVE_STATUSES:
             task["status"] = "interrupted"
             task["error"] = "上次运行未完成，请检查连接后手动重试。"
         elif task["status"] in ("completed", "downloaded") and task["transferred"] != task["size"]:
             task["status"] = "interrupted"
             task["error"] = "任务记录中的文件大小与完成字节数不一致，请手动重试。"
+        if task.get("direction") in {"upload", "copy"} and was_active:
+            task["transferred"] = 0
         state["tasks"].append(task)
 
     if warnings:
