@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "r2-batch-downloader"
+version = "1.2.0b3"
+license = {file = "LICENSE"}
+description = "S3 File Manager for Windows, with browsing and batch downloads for Cloudflare R2"
+requires-python = ">=3.10"
+dependencies = ["boto3>=1.34", "PySide6-Essentials>=6.8", "qtawesome>=1.4", "packaging>=23"]
+
+[project.scripts]
+r2-batch-download = "r2_batch_download.cli:main"
+
+[project.urls]
+Repository = "https://github.com/Jerryzjy/S3-File-Manager"
+Releases = "https://github.com/Jerryzjy/S3-File-Manager/releases"
+
+[project.gui-scripts]
+r2-downloader = "r2_batch_download.client:main"
+
+[tool.setuptools.packages.find]
+include = ["r2_batch_download*"]
+
+[tool.setuptools.package-data]
+r2_batch_download = ["preview_assets/*.png", "preview_assets/*.ico"]
