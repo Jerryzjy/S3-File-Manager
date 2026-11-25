@@ -16,3 +16,7 @@ design-reference/
 *.key
 client-state.json
 logs/
+
+/PRODUCT_ROADMAP.md
+/RELEASE_*_VALIDATION.md
+/design-qa.md

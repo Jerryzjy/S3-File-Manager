@@ -21,7 +21,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter', 'r2_batch_download.preview', 'r2_batch_download.preview_data', 'numpy', 'matplotlib', 'pandas'],
+    excludes=['tkinter', 'numpy', 'matplotlib', 'pandas'],
     noarchive=False,
     optimize=0,
 )
