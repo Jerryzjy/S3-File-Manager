@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "version": "1.2.0-beta.4",
-  "url": "https://github.com/Jerryzjy/S3-File-Manager/releases/download/v1.2.0-beta.4/S3FileManager-1.2.0-beta.4-windows-x64.exe",
-  "sha256": "988ad9bfc67019623d0e56795b071426e72f0e95b9b78c35203b622aedf01ea6",
-  "size": 68082554,
-  "notes": "- 提供 Windows 安装包，支持开始菜单、可选桌面快捷方式和卸载入口。\n- 公开仓库首页收敛为产品介绍、功能、安装和使用说明。"
+  "version": "1.3.0-rc.1",
+  "url": "https://github.com/Jerryzjy/S3-File-Manager/releases/download/v1.3.0-rc.1/S3FileManager-1.3.0-rc.1-windows-x64.exe",
+  "sha256": "29a8e50444d0adf8ef143099713567c0d9828526e78ce0f1ca42153ea372439f",
+  "size": 69058842,
+  "notes": "- 新增增量归档，重新读取远端对象并预览新增、变更和本地缺失的文件。\n- R2 上传新增同名改名。文件页新增桶内复制、复制为新名称和限时下载链接。\n- 新增 Backblaze B2、自定义 S3 的连接、浏览和下载配置。\n- 文件页可展开传输队列。侧栏可导出诊断 ZIP。"
 }
