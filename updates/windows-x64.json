@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "version": "1.3.0-rc.4",
-  "url": "https://github.com/Jerryzjy/S3-File-Manager/releases/download/v1.3.0-rc.4/S3FileManager-1.3.0-rc.4-windows-x64.exe",
-  "sha256": "2d57c4fe22d414b543cf68b4a0b358d468dc2c107387085cdb02f6e51698d951",
-  "size": 69339055,
-  "notes": "- 添加存储桶采用分步引导，可配置已开通的公开 HTTPS 域名并复制公开链接。\n- 上传页可从 HTTPS 网址导入，或粘贴本地文件、网址和文本。\n- 传输任务可按方向筛选，失败详情可选中复制。\n- 新增桶统计和桶工具，可查看存储规模和本机活动，下载整桶，执行增量归档，扫描并导出重复文件。\n- 设置新增存储桶管理、文件显示、上传并发、限时链接默认有效期和关于。"
+  "version": "1.3.0-rc.5",
+  "url": "https://github.com/Jerryzjy/S3-File-Manager/releases/download/v1.3.0-rc.5/S3FileManager-1.3.0-rc.5-windows-x64.exe",
+  "sha256": "0c55aee1429f0630f8d23f9b40190cd13f3a94ea6b20ae5cc4d5e25ff9e3ec37",
+  "size": 69340214,
+  "notes": "- 统一下拉选单样式，区分悬停、高亮和已选项，保留鼠标及键盘操作。\n\n- 「更多操作」改为独立操作面板，显示各项操作的使用条件。\n- 修复批量任务准备异常时界面一直等待的问题，退出前等待任务记录保存成功。\n- 移除统计页的 R2 操作次数、Cloudflare 用量与账单入口，以及设置中的诊断导出。\n- 「关于」新增版本和系统环境、图文指南、更新记录与反馈入口。"
 }
