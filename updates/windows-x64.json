@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "version": "1.3.0-rc.2",
-  "url": "https://github.com/Jerryzjy/S3-File-Manager/releases/download/v1.3.0-rc.2/S3FileManager-1.3.0-rc.2-windows-x64.exe",
-  "sha256": "4e0f2cd5b0684c68340a182d417ac7879a3f531ed39285706b5b5e60c1d051c1",
-  "size": 69067566,
-  "notes": "- 补充 macOS 应用打包，分别构建 Apple Silicon 和 Intel 安装镜像。可选用 macOS 钥匙串保护保存的密钥。\n- 重整中英文 README 和功能说明，版本、平台及许可证徽章使用仓库内资源。"
+  "version": "1.3.0-rc.4",
+  "url": "https://github.com/Jerryzjy/S3-File-Manager/releases/download/v1.3.0-rc.4/S3FileManager-1.3.0-rc.4-windows-x64.exe",
+  "sha256": "2d57c4fe22d414b543cf68b4a0b358d468dc2c107387085cdb02f6e51698d951",
+  "size": 69339055,
+  "notes": "- 添加存储桶采用分步引导，可配置已开通的公开 HTTPS 域名并复制公开链接。\n- 上传页可从 HTTPS 网址导入，或粘贴本地文件、网址和文本。\n- 传输任务可按方向筛选，失败详情可选中复制。\n- 新增桶统计和桶工具，可查看存储规模和本机活动，下载整桶，执行增量归档，扫描并导出重复文件。\n- 设置新增存储桶管理、文件显示、上传并发、限时链接默认有效期和关于。"
 }
