@@ -36,7 +36,7 @@ jobs:
           done
           (
             cd "$stage"
-            gh release view "$RELEASE_TAG" --json assets --jq '.assets[] | select(.name | contains("-windows-x64")) | "(.digest | sub("^sha256:"; ""))  (.name)"' > SHA256SUMS.txt
+            gh release view "$RELEASE_TAG" --json assets | jq -r '.assets[] | select(.name | contains("-windows-x64")) | (.digest | sub("^sha256:"; "")) + "  " + .name' > SHA256SUMS.txt
             test "$(wc -l < SHA256SUMS.txt)" = 3
             sha256sum ./*.dmg | sed 's@  ./@  @' >> SHA256SUMS.txt
             gh release upload "$RELEASE_TAG" ./*.dmg SHA256SUMS.txt
