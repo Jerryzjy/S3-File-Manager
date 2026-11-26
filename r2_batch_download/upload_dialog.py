@@ -7,12 +7,12 @@ from threading import Event, Thread
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSignalBlocker, Qt, QTimer
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QFileDialog, QHeaderView, QHBoxLayout,
+    QAbstractItemView, QDialog, QFileDialog, QHeaderView, QHBoxLayout,
     QLineEdit, QMessageBox, QTableView, QVBoxLayout, QWidget,
 )
 
 from .desktop_engine import Cancelled, Connection
-from .ui import ERROR, button, label, size_text
+from .ui import ERROR, Dropdown, button, label, size_text
 from .upload import UploadItem, plan_upload, upload_error
 
 
@@ -118,7 +118,7 @@ class UploadDialog(QDialog):
         layout.addWidget(self.note)
         actions = QHBoxLayout()
         conflict_label = label("同名处理", "muted")
-        self.policy = QComboBox()
+        self.policy = Dropdown()
         self.policy.addItem("跳过同名", False)
         self.policy.addItem("同名改名", "rename")
         self.policy.addItem("覆盖同名", True)

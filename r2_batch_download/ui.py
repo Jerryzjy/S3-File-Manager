@@ -7,14 +7,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QSize, QTimer, Signal
-from PySide6.QtGui import QFont, QIcon, QAction, QKeySequence, QShortcut
+from PySide6.QtCore import QEasingCurve, QPointF, QPropertyAnimation, QRectF, Qt, QSize, QTimer, QVariantAnimation, Signal
+from PySide6.QtGui import QColor, QFont, QIcon, QAction, QKeySequence, QPainter, QPainterPath, QPalette, QPen, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton, QToolButton,
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QScrollArea,
     QLineEdit, QCheckBox, QDialog, QDialogButtonBox, QFileDialog,
     QComboBox, QProgressBar, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QMessageBox, QSizePolicy, QButtonGroup, QStyle,
+    QStyledItemDelegate, QStyleOptionComboBox, QStyleOptionViewItem,
 )
 import qtawesome as qta
 
@@ -77,9 +78,17 @@ QCheckBox::indicator:hover, QCheckBox::indicator:focus { border-color: #4452CB; 
 QCheckBox::indicator:checked { background: #4452CB; border: 1px solid #4452CB; image: url(__CHECK_ICON__); }
 QLineEdit { background: #FFFFFF; border: 1px solid #D8E0ED; border-radius: 7px; padding: 9px 11px; selection-background-color: #DCE2FF; }
 QLineEdit#search { background: #FFFFFF; padding-left: 8px; }
-QComboBox { border: 1px solid #D8E0ED; border-radius: 7px; background: #FFFFFF; padding: 8px 12px; min-width: 90px; }
-QComboBox::drop-down { border: none; width: 24px; }
-QComboBox QAbstractItemView { background: #FFFFFF; selection-background-color: #E4E9FC; selection-color: #303CAB; color: #273550; border: 1px solid #D8E0ED; }
+QComboBox { border: 1px solid #D8E0ED; border-radius: 7px; background: #FFFFFF; padding: 8px 32px 8px 12px; min-width: 76px; }
+QComboBox:hover { background: #F8F9FF; border-color: #A9B5E7; }
+QComboBox:focus, QComboBox:on { border-color: #4452CB; }
+QComboBox:disabled { background: #F1F3F8; color: #828DA3; border-color: #E6EAF2; }
+QComboBox::drop-down { subcontrol-origin: border; subcontrol-position: top right; border: none; width: 30px; }
+QComboBox::down-arrow { width: 0px; height: 0px; image: none; }
+QComboBox QAbstractItemView { background: #FFFFFF; padding: 4px; color: #273550; border: 1px solid #D8E0ED; border-radius: 8px; outline: 0; }
+QMenu { background: #FFFFFF; border: 1px solid #D8E0ED; border-radius: 8px; padding: 4px; }
+QMenu::item { background: transparent; color: #273550; border-radius: 5px; padding: 8px 18px; min-height: 16px; }
+QMenu::item:selected { background: #E8EDFF; color: #303CAB; }
+QMenu::item:disabled { color: #828DA3; }
 QTableWidget { background: #FFFFFF; border: 1px solid #E2E7F0; gridline-color: #EDF0F6; outline: 0; selection-background-color: #E7EBFE; selection-color: #303CAB; }
 QTableWidget::item { padding: 10px 8px; border-bottom: 1px solid #EDF0F6; }
 QTableWidget::item:selected { background: #E7EBFE; color: #303CAB; }
@@ -98,6 +107,7 @@ QPushButton#settingsNav { text-align: left; border: 1px solid transparent; backg
 QPushButton#settingsNav:hover { background: #F1F3FA; }
 QPushButton#settingsNav:checked { color: #303CAB; background: #E7EBFE; font-weight: 600; }
 QPushButton#settingsNav:focus { border-color: #8290F9; }
+QPushButton#fileAction { text-align: left; padding: 10px 12px; }
 QFrame#uploadDrop { background: #FFFFFF; border: 1px dashed #A8B5D2; border-radius: 12px; }
 QFrame#uploadDrop[dragActive="true"] { background: #EDF0FE; border: 2px dashed #4452CB; }
 QLabel#fieldLabel { font-size: 12px; color: #465875; font-weight: 500; }
@@ -127,6 +137,98 @@ def label(text: str, name: str = "", wrap: bool = False) -> QLabel:
         result.setObjectName(name)
     result.setWordWrap(wrap)
     return result
+
+
+class DropdownItemDelegate(QStyledItemDelegate):
+    def __init__(self, control: QComboBox) -> None:
+        super().__init__(control.view())
+        self.control = control
+        self.highlight = QVariantAnimation(self)
+        self.highlight.setStartValue(0.25)
+        self.highlight.setEndValue(1.0)
+        self.highlight.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.highlight.valueChanged.connect(self.repaint_highlight)
+        control.view().selectionModel().currentChanged.connect(self.animate_highlight)
+
+    def repaint_highlight(self) -> None:
+        view = self.control.view()
+        if view.isVisible():
+            view.viewport().update(view.visualRect(view.currentIndex()))
+
+    def animate_highlight(self) -> None:
+        self.highlight.stop()
+        view = self.control.view()
+        duration = min(120, view.style().styleHint(QStyle.StyleHint.SH_Widget_Animation_Duration, None, view))
+        if view.isVisible() and duration > 0:
+            self.highlight.setDuration(duration)
+            self.highlight.start()
+
+    def sizeHint(self, option, index) -> QSize:
+        size = super().sizeHint(option, index)
+        return QSize(size.width() + 35, max(34, size.height() + 12))
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        item = QStyleOptionViewItem(option)
+        enabled = bool(item.state & QStyle.StateFlag.State_Enabled)
+        active = enabled and bool(item.state & QStyle.StateFlag.State_Selected)
+        chosen = enabled and index == self.control.model().index(
+            self.control.currentIndex(), self.control.modelColumn(), self.control.rootModelIndex()
+        )
+        background = QColor("#F2F4FF") if chosen else QColor(Qt.GlobalColor.transparent)
+        if active:
+            background = QColor("#E8EDFF")
+            if self.highlight.state() == QVariantAnimation.State.Running:
+                background.setAlphaF(self.highlight.currentValue())
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if active or chosen:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(background)
+            painter.drawRoundedRect(QRectF(item.rect.adjusted(0, 1, 0, -1)), 5, 5)
+        if chosen:
+            right = item.rect.right() - 12
+            middle = item.rect.center().y()
+            tick = QPainterPath(QPointF(right - 9, middle))
+            tick.lineTo(right - 6, middle + 3)
+            tick.lineTo(right, middle - 4)
+            painter.setPen(QPen(QColor(ACCENT), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            painter.drawPath(tick)
+        painter.restore()
+
+        item.rect.adjust(9, 0, -22, 0)
+        item.state &= ~(QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver | QStyle.StateFlag.State_HasFocus)
+        if active or chosen:
+            item.palette.setColor(QPalette.ColorRole.Text, QColor("#303CAB"))
+        super().paint(painter, item, index)
+
+
+class Dropdown(QComboBox):
+    """Use Qt's popup and selection handling with consistent item feedback."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.view().setMouseTracking(True)
+        self.setItemDelegate(DropdownItemDelegate(self))
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        arrow = self.style().subControlRect(QStyle.ComplexControl.CC_ComboBox, option, QStyle.SubControl.SC_ComboBoxArrow, self)
+        center = arrow.center()
+        opened = self.view().isVisible()
+        direction = -1 if opened else 1
+        path = QPainterPath(QPointF(center.x() - 4, center.y() - 2 * direction))
+        path.lineTo(center.x(), center.y() + 2 * direction)
+        path.lineTo(center.x() + 4, center.y() - 2 * direction)
+        color = ACCENT if opened or self.hasFocus() else DEFAULT_ICON
+        if not self.isEnabled():
+            color = "#A6B1C7"
+        with QPainter(self) as painter:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QPen(QColor(color), 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            painter.drawPath(path)
 
 
 class TabStrip(QFrame):

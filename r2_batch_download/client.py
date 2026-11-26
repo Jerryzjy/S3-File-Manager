@@ -16,7 +16,6 @@ from datetime import date, datetime, timedelta
 from collections import Counter
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
-from urllib.parse import quote
 
 from PySide6.QtCore import Qt, QSize, QSignalBlocker, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QKeySequence, QShortcut, QDesktopServices
@@ -24,17 +23,17 @@ from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton, QVBoxLayout,
     QHBoxLayout, QGridLayout, QStackedWidget, QScrollArea, QLineEdit, QCheckBox,
-    QDialog, QFileDialog, QComboBox, QProgressBar, QTableWidget, QTableWidgetItem,
+    QDialog, QFileDialog, QProgressBar, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QMessageBox, QMenu, QFormLayout, QPlainTextEdit,
 )
 
 from . import APP_NAME, __version__
 from .archive import archive_changes
 from .bucket_tools import find_duplicates
-from .ui import ACCENT, ERROR, MUTED, SUCCESS, BucketCard, FileCard, TabStrip, app_icon, app_style, button, file_style, icon, label, size_text
+from .ui import ACCENT, ERROR, MUTED, SUCCESS, BucketCard, Dropdown, FileCard, TabStrip, app_icon, app_style, button, file_style, icon, label, size_text
 from .catalog import immediate_children, normalize_objects
 from .client_store import load_state, remember_secret_label, save_state, state_path
-from .diagnostics import export_diagnostics, install_diagnostics
+from .diagnostics import install_diagnostics
 from .settings_dialog import SettingsDialog
 from .update_dialog import UpdatePanel
 from .update_feed import UpdateRelease
@@ -46,7 +45,6 @@ from .catalog_index import CatalogIndex
 from .file_view import FileFilters, FileView
 from .multipart_upload import discard_upload_checkpoint, is_multipart
 from .object_actions import LINK_DURATIONS, generate_download_link, parse_public_url, public_object_url, supports_guarded_copy, transfer_copies
-from .r2_metrics import query_bucket_operations
 from .desktop_engine import Cancelled, Connection, create_client, list_directory_page, list_objects, strong_etag, validate_connection
 from .upload import transfer_uploads, upload_error
 from .upload_dialog import UploadDialog, choose_upload_sources
@@ -185,7 +183,7 @@ class ConnectionDialog(QDialog):
         services.addWidget(label("准备目标存储桶的名称和 S3 访问密钥。", "muted", True))
         service_row = QHBoxLayout()
         service_row.addWidget(label("存储服务", "fieldLabel"))
-        self.provider = QComboBox()
+        self.provider = Dropdown()
         self.provider.setAccessibleName("存储服务")
         for key, name in SERVICE_NAMES.items():
             self.provider.addItem(name, key)
@@ -468,7 +466,7 @@ class DownloadDialog(QDialog):
         layout.addLayout(path)
         row = QHBoxLayout()
         row.addWidget(label("同时下载", "fieldLabel"))
-        self.workers = QComboBox()
+        self.workers = Dropdown()
         for count_workers in (1, 2, 4, 6, 8, 12, 16):
             self.workers.addItem(f"{count_workers} 个文件", count_workers)
         index = self.workers.findData(preferences.get("workers", 4))
@@ -787,6 +785,7 @@ class ClientWindow(QMainWindow):
         self.preparing = False
         self._prepare_token = ""
         self._closing_saved = False
+        self._close_revision: int | None = None
         self._state_revision = 0
         self._update_pending: tuple[Path, str, int] | None = None
         self._update_installing = False
@@ -982,7 +981,7 @@ class ClientWindow(QMainWindow):
         self.search.setClearButtonEnabled(True)
         self.search.setFixedWidth(258)
         self.search.textChanged.connect(self.search_changed)
-        self.search_scope = QComboBox()
+        self.search_scope = Dropdown()
         self.search_scope.setAccessibleName("搜索和筛选范围")
         self.search_scope.addItem("整个存储桶", True)
         self.search_scope.addItem("当前目录及子目录", False)
@@ -1108,10 +1107,6 @@ class ClientWindow(QMainWindow):
         heading.addWidget(label("统计", "title"), 1)
         self.overview_refresh = button("刷新存储桶", "refresh", callback=self.refresh_files)
         heading.addWidget(self.overview_refresh)
-        self.overview_provider = button("Cloudflare 用量与账单", "open-in-new", callback=self.open_r2_usage)
-        self.overview_metrics = button("R2 操作次数", "chart-box-outline", callback=self.show_r2_metrics)
-        heading.addWidget(self.overview_metrics)
-        heading.addWidget(self.overview_provider)
         layout.addLayout(heading)
         self.overview_note = label("", "muted", True)
         self.overview_note.setTextFormat(Qt.TextFormat.PlainText)
@@ -1164,9 +1159,6 @@ class ClientWindow(QMainWindow):
         catalog = self.catalogs.get(self.bucket_id)
         loading = self.bucket_id in self.loading
         self.overview_refresh.setEnabled(bool(profile) and not loading)
-        r2 = bool(profile) and profile.get("provider", "r2") == "r2"
-        self.overview_provider.setVisible(r2)
-        self.overview_metrics.setVisible(r2)
         self.overview_note.setText(
             self.load_errors.get(self.bucket_id) or (
                 "正在读取存储桶…" if loading else
@@ -1215,74 +1207,6 @@ class ClientWindow(QMainWindow):
             for column, value in enumerate(record):
                 self.sync_activity.setItem(row, column, QTableWidgetItem(value))
 
-    def open_r2_usage(self) -> None:
-        account = self.current_profile().get("account_id", "").strip()
-        target = f"https://dash.cloudflare.com/{quote(account, safe='')}/r2/overview" if account.isalnum() else "https://dash.cloudflare.com/"
-        QDesktopServices.openUrl(QUrl(target))
-
-    def show_r2_metrics(self) -> None:
-        profile = self.current_profile()
-        if not profile or profile.get("provider", "r2") != "r2":
-            return
-        dialog = QDialog(self)
-        dialog.setWindowTitle("R2 操作次数")
-        dialog.setMinimumWidth(540)
-        layout = QVBoxLayout(dialog)
-        layout.addWidget(label("R2 操作次数", "title"))
-        layout.addWidget(label("查询最近 7 天记录的请求。使用具有账户 Analytics Read 权限的 Cloudflare API Token，关闭窗口后清除 Token。", "muted", True))
-        form = QFormLayout()
-        account = QLineEdit(profile.get("account_id", ""))
-        form.addRow("Account ID", account)
-        bucket = QLineEdit(profile["bucket"])
-        bucket.setToolTip("有管辖区限制的桶请填写管辖区前缀，例如 eu_bucket-name。")
-        form.addRow("统计中的桶名称", bucket)
-        token = QLineEdit()
-        token.setEchoMode(QLineEdit.EchoMode.Password)
-        form.addRow("Cloudflare API Token", token)
-        layout.addLayout(form)
-        status = label("", "muted", True)
-        status.setTextFormat(Qt.TextFormat.PlainText)
-        layout.addWidget(status)
-        events: queue.Queue = queue.Queue()
-
-        def query() -> None:
-            args = account.text().strip(), bucket.text().strip(), token.text().strip()
-            if not all(args):
-                status.setText("请填写账户、桶名称和 API Token。")
-                return
-            submit.setEnabled(False)
-            status.setText("正在查询 Cloudflare…")
-
-            def work() -> None:
-                try:
-                    counts = query_bucket_operations(*args)
-                    events.put(f"Class A   {counts['A']:,}\nClass B   {counts['B']:,}\n其他操作   {counts['other']:,}")
-                except ValueError as exc:
-                    events.put(str(exc))
-
-            threading.Thread(target=work, daemon=True, name="s3fm-r2-metrics").start()
-
-        def poll() -> None:
-            try:
-                result = events.get_nowait()
-            except queue.Empty:
-                return
-            status.setText(result)
-            submit.setEnabled(True)
-
-        timer = QTimer(dialog)
-        timer.timeout.connect(poll)
-        timer.start(100)
-        actions = QHBoxLayout()
-        actions.addStretch()
-        actions.addWidget(button("关闭", callback=dialog.reject))
-        submit = button("查询最近 7 天", kind="primary", callback=query)
-        actions.addWidget(submit)
-        layout.addLayout(actions)
-        dialog.exec()
-        token.clear()
-        dialog.deleteLater()
-
     def build_bucket_tools(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -1316,7 +1240,7 @@ class ClientWindow(QMainWindow):
         self.duplicate_summary = label("", "muted", True)
         self.duplicate_summary.setTextFormat(Qt.TextFormat.PlainText)
         options.addWidget(self.duplicate_summary, 1)
-        self.duplicate_keep = QComboBox()
+        self.duplicate_keep = Dropdown()
         self.duplicate_keep.addItems(["标记最新文件", "标记最旧文件"])
         self.duplicate_keep.setAccessibleName("重复组保留建议")
         self.duplicate_keep.currentIndexChanged.connect(self.render_duplicate_rows)
@@ -1483,8 +1407,8 @@ class ClientWindow(QMainWindow):
         batch_panel.setSpacing(10)
         scope = QHBoxLayout()
         batch_label = label("传输批次", "muted")
-        self.batch_selector = QComboBox()
-        self.batch_selector.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.batch_selector = Dropdown()
+        self.batch_selector.setSizeAdjustPolicy(Dropdown.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.batch_selector.setMinimumContentsLength(18)
         self.batch_selector.setMaximumWidth(390)
         self.batch_selector.setAccessibleName("传输批次")
@@ -1523,7 +1447,7 @@ class ClientWindow(QMainWindow):
             self.filter_buttons[state] = control
             self.task_filters.addWidget(control)
         self.task_filters.addStretch()
-        self.direction_picker = QComboBox()
+        self.direction_picker = Dropdown()
         self.direction_picker.setAccessibleName("传输方向")
         self.direction_picker.addItem("全部方向", None)
         for direction, caption in TASK_DIRECTIONS.items():
@@ -1556,7 +1480,7 @@ class ClientWindow(QMainWindow):
         return next((profile for profile in self.profiles if profile["id"] == self.bucket_id), {})
 
     def persist(self) -> bool:
-        if self._closing_saved:
+        if self._closing_saved or self._close_revision is not None:
             return False
         if self.restore_warning:
             if QMessageBox.question(self, "修复本机数据", "原配置读取时出现问题。是否使用当前显示的连接和任务替换旧配置？取消会保留原文件。") != QMessageBox.StandardButton.Yes:
@@ -1594,9 +1518,14 @@ class ClientWindow(QMainWindow):
 
     def connection_menu(self, profile_id: str) -> None:
         menu = QMenu(self)
-        menu.addAction("编辑连接", lambda: self.edit_connection(profile_id))
-        menu.addAction("移除此连接", lambda: self.remove_connection(profile_id))
-        menu.exec(self.cursor().pos())
+        edit = menu.addAction("编辑连接")
+        remove = menu.addAction("移除此连接")
+        chosen = menu.exec(self.cursor().pos())
+        menu.deleteLater()
+        if chosen == edit:
+            self.edit_connection(profile_id)
+        elif chosen == remove:
+            self.remove_connection(profile_id)
 
     def add_connection(self) -> None:
         dialog = ConnectionDialog(QApplication.activeModalWidget() or self)
@@ -1884,23 +1813,55 @@ class ClientWindow(QMainWindow):
         profile = self.current_profile()
         if not profile or not self.file_actions.isEnabled():
             return
-        menu = QMenu(self)
-        archive = menu.addAction("增量归档…", lambda: self.create_download(not self.selected, archive=True))
-        archive.setEnabled(self.download_button.isEnabled() if self.selected else self.download_all_button.isEnabled())
+        dialog = QDialog(self)
+        dialog.setWindowTitle("更多操作")
+        dialog.setMinimumWidth(440)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(24, 20, 24, 22)
+        layout.setSpacing(10)
+        layout.addWidget(label("更多操作", "title"))
+        scope = f"已选 {len(self.selected):,} 项" if self.selected else ("当前目录" if self.prefix else "整个存储桶")
+        layout.addWidget(label(scope, "muted"))
+        selected_action = None
+
+        def add_action(title, glyph, action, available, help_text):
+            def choose() -> None:
+                nonlocal selected_action
+                selected_action = action
+                dialog.accept()
+
+            control = button(title, glyph, callback=choose)
+            control.setObjectName("fileAction")
+            control.setAutoDefault(False)
+            control.setEnabled(available)
+            layout.addWidget(control)
+            if not available:
+                layout.addWidget(label(help_text, "helper", True))
+
+        archive_ready = self.bucket_id in self.loaded and (
+            self.download_button.isEnabled() if self.selected else self.download_all_button.isEnabled()
+        )
+        add_action("增量归档", "archive-outline", lambda: self.create_download(not self.selected, archive=True),
+                   archive_ready, "等待文件读取完成，或选择要归档的文件或文件夹。")
         if profile.get("public_url"):
-            public = menu.addAction("复制公开链接", self.copy_public_link)
-            public.setEnabled(self.details_button.isEnabled())
-        r2 = profile.get("provider", "r2") == "r2"
-        if r2:
+            add_action("复制公开链接", "link-variant", self.copy_public_link,
+                       self.details_button.isEnabled(), "请在当前页选中一个文件。")
+        if profile.get("provider", "r2") == "r2":
             files_selected = bool(self.selected) and all(not key.endswith("/") for key in self.selected)
             native_copy = supports_guarded_copy(connection_of(profile))
-            copy = menu.addAction("复制到桶内目录…", self.create_copy)
-            copy.setEnabled(native_copy and files_selected)
-            rename = menu.addAction("复制为新名称…", lambda: self.create_copy(new_name=True))
-            rename.setEnabled(native_copy and files_selected and len(self.selected) == 1)
-            share = menu.addAction("生成限时下载链接…", self.show_download_link)
-            share.setEnabled(self.details_button.isEnabled())
-        menu.exec(self.file_actions.mapToGlobal(self.file_actions.rect().bottomLeft()))
+            copy_help = "此操作需要 Cloudflare R2 原生 S3 Endpoint。"
+            add_action("复制到桶内目录", "content-copy", self.create_copy,
+                       native_copy and files_selected, "请选择文件。" if native_copy else copy_help)
+            add_action("复制为新名称", "file-edit-outline", lambda: self.create_copy(new_name=True),
+                       native_copy and files_selected and len(self.selected) == 1,
+                       "请选择一个文件。" if native_copy else copy_help)
+            add_action("生成限时下载链接", "link-variant", self.show_download_link,
+                       self.details_button.isEnabled(), "请在当前页选中一个文件。")
+        layout.addWidget(button("关闭", callback=dialog.reject), alignment=Qt.AlignmentFlag.AlignRight)
+        result = dialog.exec()
+        dialog.deleteLater()
+        if result == QDialog.DialogCode.Accepted and selected_action is not None:
+            selected_action()
 
     def copy_public_link(self) -> None:
         if not self.details_button.isEnabled() or len(self.selected) != 1:
@@ -1951,7 +1912,7 @@ class ClientWindow(QMainWindow):
         source = QLineEdit(key)
         source.setReadOnly(True)
         form.addRow("对象 Key", source)
-        duration = QComboBox()
+        duration = Dropdown()
         for title, seconds in LINK_DURATIONS:
             duration.addItem(title, seconds)
         duration.setCurrentIndex(max(0, duration.findData(self.preferences.get("share_duration", 3600))))
@@ -2328,7 +2289,9 @@ class ClientWindow(QMainWindow):
         self.details_button.setEnabled(count == 1 and any(
             entry["key"] in self.selected and entry["kind"] == "file" for entry in self.visible_entries
         ))
-        self.file_actions.setEnabled(self.download_button.isEnabled() or self.download_all_button.isEnabled())
+        self.file_actions.setEnabled(bool(self.bucket_id) and (
+            self.download_button.isEnabled() or self.download_all_button.isEnabled() or self.details_button.isEnabled()
+        ))
         self.select_button.setText("取消本页选择" if page_keys and page_keys.issubset(self.selected) else "全选本页")
         if self.pages.currentIndex() == 0:
             profile = self.current_profile()
@@ -2632,11 +2595,23 @@ class ClientWindow(QMainWindow):
             self._prepare_token = uuid.uuid4().hex
             token = self._prepare_token
             self.activity.setText("正在创建传输任务…")
+
             def prepare() -> None:
-                self.events.put({"kind": "tasks_ready", "token": token, "tasks": materialize(), "connection": connection})
+                event = {"kind": "tasks_ready", "token": token, "connection": connection}
+                try:
+                    event["tasks"] = materialize()
+                except Exception as exc:
+                    event["error"] = friendly_error(exc, connection)
+                self.events.put(event)
+
             threading.Thread(target=prepare, daemon=True, name="r2-task-prepare").start()
             return
-        self.enqueue_tasks(materialize(), connection)
+        try:
+            tasks = materialize()
+        except Exception as exc:
+            QMessageBox.warning(self, "无法创建任务", friendly_error(exc, connection))
+            return
+        self.enqueue_tasks(tasks, connection)
 
     def enqueue_tasks(self, created: list[dict[str, Any]], connection: Connection) -> None:
         self.tasks.extend(created)
@@ -3234,7 +3209,7 @@ class ClientWindow(QMainWindow):
     def show_settings(self) -> None:
         updates = UpdatePanel(VERSION, state_path().parent / "update-downloads", self.can_install_update)
         dialog = SettingsDialog(
-            self, updates, self.show_download_settings, self.save_diagnostics,
+            self, updates, self.show_download_settings,
             preferences=self.preferences, save_preferences=self.save_display_preferences,
             list_profiles=self.ordered_profiles, add_profile=self.add_connection,
             edit_profile=self.edit_connection, remove_profile=self.remove_connection,
@@ -3278,22 +3253,6 @@ class ClientWindow(QMainWindow):
         self.preferences.update(output_dir=dialog.destination.text().strip(), workers=dialog.workers.currentData(), skip_existing=dialog.skip.isChecked())
         if self.persist():
             self.toast("下载设置已保存。")
-
-    def save_diagnostics(self, parent: QWidget) -> None:
-        filename, _ = QFileDialog.getSaveFileName(parent, "导出诊断", f"S3FileManager-diagnostics-{datetime.now():%Y%m%d-%H%M%S}.zip",
-                                                   "ZIP 文件 (*.zip)")
-        if not filename:
-            return
-
-        def collect() -> None:
-            try:
-                export_diagnostics(Path(filename), VERSION)
-            except OSError as exc:
-                self.events.put({"kind": "background_error", "error": f"诊断导出失败：{exc}"})
-            else:
-                self.events.put({"kind": "diagnostics_exported"})
-
-        threading.Thread(target=collect, daemon=True, name="s3fm-diagnostics-export").start()
 
     def install_staged_update(self, staged: Path, release: UpdateRelease) -> None:
         if not self.can_install_update():
@@ -3407,9 +3366,6 @@ class ClientWindow(QMainWindow):
             else:
                 self.toast(f"已导出 {event['count']:,} 条失败记录。")
             return
-        if kind == "diagnostics_exported":
-            self.toast("诊断文件已导出。")
-            return
         if kind in {"save_error", "background_error"}:
             self.status_label.setText(event["error"])
             return
@@ -3440,7 +3396,11 @@ class ClientWindow(QMainWindow):
         if kind == "tasks_ready":
             if event["token"] == self._prepare_token and not self.closing:
                 self.preparing = False
-                self.enqueue_tasks(event["tasks"], event["connection"])
+                self._prepare_token = ""
+                if "error" in event:
+                    QMessageBox.warning(self, "无法创建任务", event["error"])
+                else:
+                    self.enqueue_tasks(event["tasks"], event["connection"])
             return
         if kind == "directory_page":
             if event["request"] is not self._directory_request or event["profile_id"] != self.bucket_id or event["prefix"] != self.prefix or self.bucket_id not in self.loading:
@@ -3551,7 +3511,8 @@ class ClientWindow(QMainWindow):
                 before = task.get("transferred", 0)
                 task["transferred"] = min(task.get("size", 0), max(0, before + event.get("bytes", 0)))
                 if (not self._task_structure_dirty and task["status"] not in {"completed", "skipped"}
-                        and (self.task_batch is None or self.task_batch == task.get("batch_id", ""))):
+                        and (self.task_batch is None or self.task_batch == task.get("batch_id", ""))
+                        and (self.task_direction is None or self.task_direction == task.get("direction", "download"))):
                     self._batch_bytes += task["transferred"] - before
             elif kind == "result":
                 task.update({key: value for key, value in event.items() if key not in {"id", "kind"}})
@@ -3577,7 +3538,7 @@ class ClientWindow(QMainWindow):
             self.render_tasks()
         if self.task_dirty and self.queue_preview.isVisible() and now - self.last_queue_preview > 0.35:
             self.render_queue_preview()
-        if self.persist_dirty and now - self.last_persist > 4:
+        if not self.closing and self.persist_dirty and now - self.last_persist > 4:
             self.persist()
         if self.dispatch_needed and not self.transfer_running:
             self.dispatch()
@@ -3591,14 +3552,7 @@ class ClientWindow(QMainWindow):
         if self._update_installing:
             self.activity.setText("正在准备更新，即将重启…")
         if self.closing and not (self.transfer_running or self.upload_cleaning):
-            if not self._closing_saved:
-                self.persist()
-                self.writer.close(timeout=0)
-                self._closing_saved = True
-                self.centralWidget().setEnabled(False)
-            if self.writer.is_closed:
-                self.timer.stop()
-                self.close()
+            self.close()
 
     def toast(self, text: str) -> None:
         if self.toast_label is not None:
@@ -3640,14 +3594,28 @@ class ClientWindow(QMainWindow):
         self.reset_directory_pages()
         self.closing = True
         self._prepare_token = ""
-        if not self._closing_saved:
+        if not self._closing_saved and self._close_revision is None:
             if not self.persist():
                 event.ignore()
                 self.closing = False
                 return
-            self.writer.close(timeout=0)
-            self._closing_saved = True
+            self._close_revision = self._state_revision
             self.centralWidget().setEnabled(False)
+        if not self._closing_saved:
+            if self.writer.completed_revision < self._close_revision:
+                self.activity.setText("正在保存任务记录…")
+                event.ignore()
+                return
+            if self.writer.saved_revision < self._close_revision:
+                event.ignore()
+                self.closing = False
+                self._close_revision = None
+                self.persist_dirty = True
+                self.centralWidget().setEnabled(True)
+                QMessageBox.warning(self, "暂时无法退出", "任务记录未能保存。请检查磁盘空间和本机目录权限后重试。")
+                return
+            self._closing_saved = True
+            self.writer.close(timeout=0)
         if self.writer.is_closed:
             self.timer.stop()
             event.accept()

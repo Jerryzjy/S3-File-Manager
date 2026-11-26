@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 from io import BytesIO
-import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
@@ -13,7 +12,6 @@ from r2_batch_download.bucket_tools import find_duplicates
 from r2_batch_download.catalog_index import CatalogIndex
 from r2_batch_download.desktop_engine import Connection
 from r2_batch_download.object_actions import public_object_url
-from r2_batch_download.r2_metrics import query_bucket_operations
 from r2_batch_download.upload_import import save_url_sources, urls_from_text
 
 
@@ -42,20 +40,6 @@ class BucketToolsTests(unittest.TestCase):
         for base, key in (("https://user@public.example.com", "a"), ("https://public.example.com", "../a")):
             with self.assertRaises(ValueError):
                 public_object_url(base, key)
-
-    def test_r2_operations_query_uses_bucket_scope_and_keeps_unknown_actions_separate(self):
-        groups = [{"sum": {"requests": number}, "dimensions": {"actionType": action}}
-                  for number, action in ((3, "ListObjectsV2"), (2, "GetObject"), (1, "DeleteObject"))]
-        payload = {"data": {"viewer": {"accounts": [{"r2OperationsAdaptiveGroups": groups}]}}}
-        opener = Mock()
-        opener.open.return_value = BytesIO(json.dumps(payload).encode())
-        with patch("r2_batch_download.r2_metrics.build_opener", return_value=opener):
-            counts = query_bucket_operations("a" * 32, "eu_test", "b" * 32)
-        self.assertEqual(counts, {"A": 3, "B": 2, "other": 1})
-        request = opener.open.call_args.args[0]
-        self.assertEqual(request.full_url, "https://api.cloudflare.com/client/v4/graphql")
-        self.assertEqual(json.loads(request.data)["variables"]["bucket"], "eu_test")
-        self.assertEqual(request.get_header("Authorization"), f"Bearer {'b' * 32}")
 
     def test_url_import_preserves_url_queries_and_local_files(self):
         class Response(BytesIO):

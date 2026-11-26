@@ -35,6 +35,14 @@ class _ImmediateWriter:
         self.submissions += 1
         return self.submissions
 
+    @property
+    def completed_revision(self) -> int:
+        return self.submissions
+
+    @property
+    def saved_revision(self) -> int:
+        return self.submissions
+
     def close(self, **_kwargs: object) -> bool:
         self.is_closed = True
         return True

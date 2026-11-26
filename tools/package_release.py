@@ -27,6 +27,8 @@ def package_documents(project: Path, release: Path, repository: str | None, tag:
     images.mkdir(parents=True, exist_ok=True)
     for image in (project / "docs" / "images").glob("*.png"):
         shutil.copy2(image, images / image.name)
+    for guide in (project / "docs").glob("guide.*.md"):
+        shutil.copy2(guide, release / "docs" / guide.name)
     notices = release / "licenses"
     notices.mkdir(parents=True, exist_ok=True)
     components = ("boto3", "botocore", "s3transfer", "jmespath", "python-dateutil", "urllib3", "six", "PySide6-Essentials", "shiboken6", "qtawesome", "QtPy", "PyInstaller", "certifi", "cryptography", "packaging") + extra_components

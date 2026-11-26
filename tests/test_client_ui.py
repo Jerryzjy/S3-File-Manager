@@ -161,6 +161,67 @@ class ClientUiTests(unittest.TestCase):
         self.assertEqual(_DeferredThread.instances, [])
         self.create_client.assert_not_called()
 
+    def test_direction_dropdown_previews_hover_and_accepts_mouse_and_keyboard(self) -> None:
+        window = self._make_window()
+        window.tasks_nav.click()
+        picker = window.direction_picker
+        QTest.mouseClick(picker, Qt.MouseButton.LeftButton)
+        view = picker.view()
+        self.assertTrue(view.isVisible())
+        target = view.model().index(1, 0)
+        QTest.mouseMove(view.viewport(), view.visualRect(target).center())
+        self.assertEqual(view.currentIndex(), target)
+        self.assertIsNone(picker.currentData())
+        QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=view.visualRect(target).center())
+        self.assertEqual(picker.currentData(), "download")
+        self.assertFalse(view.isVisible())
+
+        picker.showPopup()
+        QTest.keyClick(view, Qt.Key.Key_Down)
+        QTest.keyClick(view, Qt.Key.Key_Return)
+        self.assertEqual(picker.currentData(), "upload")
+        picker.showPopup()
+        QTest.keyClick(view, Qt.Key.Key_Down)
+        QTest.keyClick(view, Qt.Key.Key_Escape)
+        self.assertFalse(view.isVisible())
+        self.assertEqual(picker.currentData(), "upload")
+
+    def test_more_actions_opens_dialog_and_routes_selected_action(self) -> None:
+        self.state["profiles"] = [self._profile()]
+        window = self._make_window()
+        window.files[window.bucket_id] = client.normalize_objects([{"Key": "report.csv", "Size": 128}])
+        window.loaded.add(window.bucket_id)
+        window.render_files()
+        window.selected = {"report.csv"}
+        window.update_selection()
+        self.assertTrue(window.file_actions.isEnabled())
+
+        def choose(dialog: QDialog) -> int:
+            dialog.show()
+            operations = {control.text(): control for control in dialog.findChildren(QPushButton)}
+            self.assertTrue(operations["增量归档"].isEnabled())
+            self.assertTrue(operations["复制到桶内目录"].isEnabled())
+            control = operations["生成限时下载链接"]
+            self.assertTrue(control.isEnabled())
+            QTest.mouseClick(control, Qt.MouseButton.LeftButton)
+            return dialog.result()
+
+        with (patch.object(QDialog, "exec", choose), patch.object(window, "show_download_link") as operation):
+            window.file_actions.click()
+        operation.assert_called_once_with()
+
+    def test_batch_preparation_failure_unblocks_main_window(self) -> None:
+        window = self._make_window()
+        connection = client.connection_of(self._profile() | {"secret_access_key": "test-secret-key"})
+        task_builder = Mock(side_effect=ValueError("test-secret-key"))
+        window.prepare_tasks(501, task_builder, connection)
+        self.assertTrue(window.preparing)
+        _DeferredThread.instances[-1].complete()
+        window.poll()
+        self.assertFalse(window.preparing)
+        self.assertEqual(window.tasks, [])
+        self.assertNotIn("test-secret-key", self.warning.call_args.args[-1])
+
     def test_settings_checks_official_source_and_stages_windows_install(self) -> None:
         self.state["preferences"]["update_feed_url"] = "https://legacy.example.test/update.json"
         window = self._make_window()
@@ -932,6 +993,32 @@ class ClientUiTests(unittest.TestCase):
         window.closeEvent(final_event)
         self.assertTrue(final_event.isAccepted())
         self.assertEqual(writer.submit_count, 1)
+
+    def test_failed_final_save_keeps_window_open_and_allows_retry(self) -> None:
+        window = self._make_window()
+        original_writer = window.writer
+
+        class DelayedWriter(_ImmediateStateWriter):
+            def submit(self, profiles, tasks, preferences) -> int:
+                return self.completed_revision + 1
+
+        writer = DelayedWriter(lambda _error: None, save_fn=original_writer.save_fn)
+        window.writer = writer
+        event = QCloseEvent()
+        window.closeEvent(event)
+        self.assertFalse(event.isAccepted())
+        self.assertTrue(window.closing)
+        self.assertFalse(writer.is_closed)
+        writer.completed_revision = 1
+        window.poll()
+        self.assertFalse(window.closing)
+        self.assertTrue(window.centralWidget().isEnabled())
+        self.warning.assert_called()
+        window.close()
+        writer.completed_revision = writer.saved_revision = 2
+        window.poll()
+        self.assertTrue(writer.is_closed)
+        self.assertFalse(window.isVisible())
 
 
 if __name__ == "__main__":

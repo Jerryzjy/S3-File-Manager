@@ -8,12 +8,11 @@ from threading import Event
 import unittest
 from unittest.mock import patch
 from urllib.parse import parse_qs, unquote, urlsplit
-from zipfile import ZipFile
 
 from botocore.awsrequest import AWSResponse
 from botocore.exceptions import ClientError
 
-from r2_batch_download import client_store, diagnostics, object_actions, upload
+from r2_batch_download import client_store, object_actions, upload
 from r2_batch_download.desktop_engine import Connection, create_client, validate_connection
 
 
@@ -97,20 +96,3 @@ class ReleaseOperationTests(unittest.TestCase):
             self.assertEqual({row.key for row in rows}, {"docs/note (2).txt", "docs/note (3).txt"})
             self.assertTrue(all(not row.remote_etag for row in rows))
             self.assertEqual({row.original_key for row in rows if row.original_key}, {"docs/note.txt"})
-
-    def test_diagnostics_export_uses_sanitized_frames_and_excludes_state(self):
-        with TemporaryDirectory() as folder:
-            root = Path(folder)
-            state = root / "client-state.json"
-            state.write_text("private-state-key", encoding="utf-8")
-            logs = root / "logs"
-            logs.mkdir()
-            (logs / "errors.log").write_text("2026-11-26 12:00:00,005 RuntimeError\nengine.py:12 in run\nsecret=abc\n", encoding="utf-8")
-            (logs / "native-fault.log").write_text("C:/Users/Private/anything", encoding="utf-8")
-            output = root / "report.zip"
-            with patch.object(diagnostics, "state_path", return_value=state):
-                diagnostics.export_diagnostics(output, "test-version")
-            with ZipFile(output) as report:
-                self.assertEqual(set(report.namelist()), {"version.txt", "errors.log"})
-                self.assertIn(b"engine.py", report.read("errors.log"))
-                self.assertNotIn(b"secret", report.read("errors.log"))

@@ -66,6 +66,13 @@ class StateWriter:
         # Copying is intentionally outside the writer lock. An active disk
         # operation cannot prevent the UI from submitting a new revision.
         snapshot_profiles = [flat_copy(profile) for profile in profiles]
+        for profile, snapshot in zip(profiles, snapshot_profiles):
+            history = profile.get("sync_history")
+            if isinstance(history, list):
+                snapshot["sync_history"] = [
+                    record.copy() for record in history[-20:] if isinstance(record, list) and len(record) == 2
+                    and all(isinstance(item, str) for item in record)
+                ]
         snapshot_tasks = [flat_copy(task) for task in tasks]
         snapshot_preferences = flat_copy(preferences)
         with self._condition:
