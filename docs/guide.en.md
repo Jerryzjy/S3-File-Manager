@@ -16,7 +16,7 @@ Screenshots show the v1.3.0-rc.5 test build with sample files in the Chinese des
 
 1. Open [GitHub Releases](https://github.com/Jerryzjy/S3-File-Manager/releases).
 2. On Windows 10 or 11 x64, download `*-windows-x64-setup.exe`. Run the installer, choose a location and optional desktop shortcut, then launch **S3 File Manager** from the Start menu.
-3. On Mac, download `*-macos-arm64.dmg` for Apple silicon or `*-macos-x86_64.dmg` for Intel. Open the image and drag the app to Applications. The Mac preview is ad hoc signed.
+3. On Mac, download `*-macos-arm64.dmg` for Apple silicon or `*-macos-x86_64.dmg` for Intel. Open the image and drag the app to Applications. The Mac app is ad hoc signed and awaits Apple notarization.
 
 ## 2. Connect a bucket
 

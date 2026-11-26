@@ -16,7 +16,7 @@
 
 1. 打开 [GitHub Releases](https://github.com/Jerryzjy/S3-File-Manager/releases)。
 2. Windows 10 / 11 x64 下载 `*-windows-x64-setup.exe`，运行安装向导，可选安装目录和桌面快捷方式。安装后从开始菜单打开 **S3 File Manager**。
-3. Mac 根据芯片选择 `*-macos-arm64.dmg` 或 `*-macos-x86_64.dmg`。打开镜像，把应用拖到「应用程序」后启动。macOS 预览版使用临时签名。
+3. Mac 根据芯片选择 `*-macos-arm64.dmg` 或 `*-macos-x86_64.dmg`。打开镜像，把应用拖到「应用程序」后启动。macOS 应用使用临时签名，尚未完成 Apple 公证。
 
 ## 2. 连接存储桶
 

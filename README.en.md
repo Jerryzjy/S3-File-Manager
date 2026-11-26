@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/Jerryzjy/S3-File-Manager/releases"><img src="docs/images/badge-releases.png" height="24" alt="GitHub Releases"></a>
   <img src="docs/images/badge-windows.png" height="24" alt="Windows 10 and 11, 64-bit">
-  <a href="#downloads"><img src="docs/images/badge-macos.png" height="24" alt="macOS preview"></a>
+  <a href="#downloads"><img src="docs/images/badge-macos.png" height="24" alt="macOS Apple silicon and Intel"></a>
   <a href="LICENSE"><img src="docs/images/badge-license.png" height="24" alt="GPL-3.0 license"></a>
 </p>
 <p align="center">
@@ -19,9 +19,9 @@
 | Platform | Installation |
 | --- | --- |
 | Windows 10 / 11 x64 | Download `*-windows-x64-setup.exe` from [Releases](https://github.com/Jerryzjy/S3-File-Manager/releases). Run the installer, then open the app from the Start menu. A portable ZIP and in-app update check are also available. |
-| macOS, Apple Silicon and Intel | Check [Releases](https://github.com/Jerryzjy/S3-File-Manager/releases) for the preview. Choose `*-macos-arm64.dmg` for Apple Silicon or `*-macos-x86_64.dmg` for Intel. Open the image and drag the app to Applications. [Build status](https://github.com/Jerryzjy/S3-File-Manager/actions/workflows/build-macos.yml) |
+| macOS, Apple Silicon and Intel | Download a DMG from [Releases](https://github.com/Jerryzjy/S3-File-Manager/releases). Choose `*-macos-arm64.dmg` for Apple silicon or `*-macos-x86_64.dmg` for Intel. Open the image and drag the app to Applications. |
 
-To update the macOS preview, open the new DMG and replace the app manually. The app is ad hoc signed and awaits Apple Developer ID signing and notarization.
+To update on macOS, open the new DMG and replace the app manually. The app is ad hoc signed and awaits Apple Developer ID signing and notarization.
 
 ## Quick start
 

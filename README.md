@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/Jerryzjy/S3-File-Manager/releases"><img src="docs/images/badge-releases.png" height="24" alt="GitHub Releases"></a>
   <img src="docs/images/badge-windows.png" height="24" alt="Windows 10 和 11，64 位">
-  <a href="#下载与安装"><img src="docs/images/badge-macos.png" height="24" alt="macOS 预览版"></a>
+  <a href="#下载与安装"><img src="docs/images/badge-macos.png" height="24" alt="macOS Apple 芯片和 Intel"></a>
   <a href="LICENSE"><img src="docs/images/badge-license.png" height="24" alt="GPL-3.0 许可证"></a>
 </p>
 <p align="center">
@@ -19,9 +19,9 @@
 | 平台 | 安装方式 |
 | --- | --- |
 | Windows 10 / 11（x64） | 从 [Releases](https://github.com/Jerryzjy/S3-File-Manager/releases) 下载 `*-windows-x64-setup.exe`，运行后从开始菜单打开。也有便携 ZIP。 |
-| macOS（Apple 芯片、Intel） | 在 [Releases](https://github.com/Jerryzjy/S3-File-Manager/releases) 查看 macOS 预览版。Apple 芯片选 `*-macos-arm64.dmg`，Intel 选 `*-macos-x86_64.dmg`。打开镜像，将应用拖入「应用程序」。[构建状态](https://github.com/Jerryzjy/S3-File-Manager/actions/workflows/build-macos.yml) |
+| macOS（Apple 芯片、Intel） | 从 [Releases](https://github.com/Jerryzjy/S3-File-Manager/releases) 下载对应的 DMG。Apple 芯片选 `*-macos-arm64.dmg`，Intel 选 `*-macos-x86_64.dmg`。打开镜像，将应用拖入「应用程序」。 |
 
-macOS 预览版需打开新版 DMG 并手动替换应用。镜像使用临时签名，尚无 Apple Developer ID 签名及公证。
+macOS 需打开新版 DMG 并手动替换应用。应用使用临时签名，尚未完成 Apple Developer ID 签名和公证。
 
 ## 快速上手
 
