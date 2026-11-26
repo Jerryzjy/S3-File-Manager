@@ -75,14 +75,28 @@ jobs:
           kill "$pid"
           wait "$pid" || true
           trap - EXIT
+      - name: Package and verify the disk image
+        env:
+          BUILD_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          version=$(python -c 'from r2_batch_download import __version__; print(__version__)')
           staging="$RUNNER_TEMP/s3fm-disk"
+          app='dist/S3 File Manager.app'
           mkdir -p "$staging" dist/release
           ditto "$app" "$staging/S3 File Manager.app"
           ln -s /Applications "$staging/Applications"
           python tools/package_release.py "$staging" --macos-docs --github-repository "$GITHUB_REPOSITORY" --github-tag "v$version"
           image="dist/release/S3FileManager-$version-macos-$BUILD_ARCH.dmg"
-          hdiutil create -volname 'S3 File Manager' -srcfolder "$staging" -format UDZO -ov "$image"
+          intermediate="$RUNNER_TEMP/s3fm-hfs.dmg"
+          hdiutil makehybrid -hfs -hfs-volume-name 'S3 File Manager' -o "$intermediate" "$staging"
+          hdiutil convert "$intermediate" -format UDZO -o "$image"
           hdiutil verify "$image"
+          mountpoint="$RUNNER_TEMP/s3fm-image-check"
+          hdiutil attach "$image" -readonly -nobrowse -mountpoint "$mountpoint"
+          trap 'hdiutil detach "$mountpoint"' EXIT
+          test "$(readlink "$mountpoint/Applications")" = /Applications
+          codesign --verify --deep --strict "$mountpoint/S3 File Manager.app"
           shasum -a 256 "$image"
       - name: Upload installation image
         uses: actions/upload-artifact@v4
