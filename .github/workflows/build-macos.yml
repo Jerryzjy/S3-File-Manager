@@ -88,14 +88,24 @@ jobs:
           ln -s /Applications "$staging/Applications"
           python tools/package_release.py "$staging" --macos-docs --github-repository "$GITHUB_REPOSITORY" --github-tag "v$version"
           image="dist/release/S3FileManager-$version-macos-$BUILD_ARCH.dmg"
-          intermediate="$RUNNER_TEMP/s3fm-hfs.dmg"
-          hdiutil makehybrid -hfs -hfs-volume-name 'S3 File Manager' -o "$intermediate" "$staging"
+          intermediate="$RUNNER_TEMP/s3fm-staging.dmg"
+          staging_mount="$RUNNER_TEMP/s3fm-staging-volume"
+          size_kib=$(du -sk "$staging" | awk '{print $1}')
+          hdiutil create -size "$((size_kib / 1024 + 128))m" -fs APFS -volname 'S3 File Manager' -format UDRW "$intermediate"
+          hdiutil attach "$intermediate" -nobrowse -mountpoint "$staging_mount"
+          trap 'hdiutil detach "$staging_mount"' EXIT
+          ditto "$staging/" "$staging_mount/"
+          codesign --verify --deep --strict "$staging_mount/S3 File Manager.app"
+          hdiutil detach "$staging_mount"
+          trap - EXIT
           hdiutil convert "$intermediate" -format UDZO -o "$image"
           hdiutil verify "$image"
           mountpoint="$RUNNER_TEMP/s3fm-image-check"
           hdiutil attach "$image" -readonly -nobrowse -mountpoint "$mountpoint"
           trap 'hdiutil detach "$mountpoint"' EXIT
           test "$(readlink "$mountpoint/Applications")" = /Applications
+          test -x "$mountpoint/S3 File Manager.app/Contents/MacOS/S3FileManager"
+          test -f "$mountpoint/使用说明.md"
           codesign --verify --deep --strict "$mountpoint/S3 File Manager.app"
           shasum -a 256 "$image"
       - name: Upload installation image
