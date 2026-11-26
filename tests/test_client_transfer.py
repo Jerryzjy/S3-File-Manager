@@ -63,7 +63,7 @@ class TransferTests(unittest.TestCase):
             self.assertEqual((self.root / key).read_bytes(), payload)
             self.assertEqual(results[key]["status"], "completed")
             self.assertEqual(results[key]["transferred"], len(payload))
-            self.assertEqual(results[key]["path"], str(self.root / key))
+            self.assertEqual(Path(results[key]["path"]).resolve(), (self.root / key).resolve())
         self.assertEqual(sum(event["bytes"] for event in self.events if event["kind"] == "progress"), sum(map(len, self.payloads.values())))
         self.assertEqual(list(self.root.glob("**/*.part")), [])
         self.client.close.assert_called_once()
