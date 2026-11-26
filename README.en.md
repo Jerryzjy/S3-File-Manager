@@ -12,7 +12,7 @@
   <a href="#downloads"><strong>Downloads</strong></a> · <a href="#quick-start">Quick start</a> · <a href="#features">Features</a> · <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-![S3 File Manager browsing a bucket with the transfer queue open](docs/images/s3-file-manager.png)
+![S3 File Manager file browser](docs/images/guide-files.png)
 
 ## Downloads
 
@@ -24,6 +24,8 @@
 To update the macOS preview, open the new DMG and replace the app manually. The app is ad hoc signed and awaits Apple Developer ID signing and notarization.
 
 ## Quick start
+
+[Open the illustrated user guide](docs/guide.en.md)
 
 1. Add a bucket from the sidebar and select a storage provider.
 2. Enter the connection information, test the connection and save it. Read access is sufficient for browsing, downloads and archives.
@@ -56,14 +58,14 @@ To update the macOS preview, open the new DMG and replace the app manually. The 
 - **Incremental archives**. Choose **More actions** (更多操作) and preview new, changed or locally missing items using the last successful archive. Use the same source scope and local folder for subsequent archives. Other local files stay in place.
 - **R2 bucket copies**. Copy files to a folder in the same bucket or copy a single object to a new name. Copies use the native R2 endpoint and preserve the source and existing destinations. The per-object copy limit is approximately 4.995 GiB.
 - **Expiring R2 links**. Generate a download link for a single object for 15 minutes, 1 hour, 24 hours or 7 days. View its expiry and copy the link.
-- **Statistics and bucket tools**. Inspect object counts, stored bytes, local transfer activity and sync history. R2 operation metrics require an account API token with `Analytics Read` permission. Bucket tools provide full-bucket downloads, incremental archives and content-based duplicate scans.
+- **Statistics and bucket tools**. Inspect object counts, stored bytes, local transfer activity and sync history. Bucket tools provide full-bucket downloads, incremental archives and content-based duplicate scans.
 
 ### Settings and troubleshooting
 
 - **Download settings**. Set the default destination, transfer concurrency and local conflict policy. Profiles, tasks and checkpoints stay in the current user's data directory.
 - **Software updates**. Use **Settings → Software update → Check for updates** (设置 → 软件更新 → 检查更新). Windows can download and install updates in the app. macOS can open the download for the current chip.
 - **Connection checks**. Check the bucket, endpoint, region and permissions if the connection fails. R2 uploads and copies need read and write access.
-- **Diagnostics**. Use **Settings → Diagnostics** (设置 → 诊断) to export a ZIP. Include your OS, client version and reproduction steps when [reporting an issue](https://github.com/Jerryzjy/S3-File-Manager/issues).
+- **Feedback**. Include the app version, operating system, steps and any error shown when you report a problem. [Report an issue](https://github.com/Jerryzjy/S3-File-Manager/issues)
 
 ## Open source
 
