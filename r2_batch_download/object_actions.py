@@ -3,13 +3,42 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from botocore.exceptions import ClientError
 
 from .desktop_engine import Connection, EventCallback, _close_client, _redact, create_client, strong_etag
 
 COPY_LIMIT = 5 * 1024**3 - 5 * 1024**2
+LINK_DURATIONS = (("15 分钟", 900), ("1 小时", 3600), ("24 小时", 86400), ("7 天", 604800))
+
+
+def parse_public_url(value: str) -> str:
+    address = value.strip()
+    if not address:
+        return ""
+    if any(character.isspace() or ord(character) < 32 or character in "\\?#" for character in address):
+        raise ValueError("请填写完整的公开 HTTPS 域名。")
+    try:
+        parsed = urlsplit(address)
+        valid = (parsed.scheme == "https" and parsed.hostname and "%" not in parsed.netloc
+                 and parsed.username is None and parsed.password is None
+                 and parsed.path in {"", "/"} and parsed.port in {None, 443})
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError("公开链接需要 HTTPS 域名，域名后请留空。")
+    host = parsed.hostname.encode("idna").decode("ascii")
+    if ":" in host:
+        host = f"[{host}]"
+    return f"https://{host}"
+
+
+def public_object_url(address: str, key: str) -> str:
+    base = parse_public_url(address)
+    if not base or any(segment in {".", ".."} for segment in key.split("/")):
+        raise ValueError("此对象路径无法生成公开链接，请使用限时下载链接。")
+    return f"{base}/{quote(key, safe='/')}"
 
 
 def supports_guarded_copy(connection: Connection) -> bool:

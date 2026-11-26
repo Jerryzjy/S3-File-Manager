@@ -47,6 +47,28 @@ class UpdateFeedTests(unittest.TestCase):
             with self.subTest(current=current), patch.object(update_feed, "_open", return_value=_Response(self.manifest())):
                 self.assertIsNone(update_feed.fetch_update(_URL, current))
 
+    def test_mac_update_requires_a_published_installer_for_this_architecture(self):
+        def release(version, arch, *, draft=False):
+            return {"tag_name": f"v{version}", "draft": draft, "body": "说明", "assets": [{
+                "name": f"S3FileManager-{version}-macos-{arch}.dmg", "state": "uploaded", "size": 1024,
+            }]}
+
+        raw = json.dumps([
+            release("1.5.0", "arm64", draft=True),
+            release("1.4.1", "x86_64"),
+            release("1.4.0", "arm64"),
+            release("1.3.0-rc.2", "arm64"),
+        ]).encode()
+        with patch.object(update_feed, "_open", return_value=_Response(raw)) as get:
+            available = update_feed.fetch_mac_update("1.3.0", "arm64")
+        get.assert_called_once_with(update_feed.MAC_RELEASES_API, False)
+        self.assertEqual(available, update_feed.MacUpdateRelease(
+            "1.4.0", "https://github.com/Jerryzjy/S3-File-Manager/releases/download/v1.4.0/S3FileManager-1.4.0-macos-arm64.dmg",
+            1024, "说明",
+        ))
+        with patch.object(update_feed, "_open", return_value=_Response(raw)):
+            self.assertIsNone(update_feed.fetch_mac_update("1.4.1", "x86_64"))
+
     def test_rejects_oversized_or_invalid_manifest(self):
         cases = [
             b"X" * (update_feed.MAX_MANIFEST_BYTES + 1),

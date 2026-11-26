@@ -1,4 +1,4 @@
-"""Read an update manifest and stage its verified Windows executable."""
+"""Find official updates and stage verified Windows executables."""
 
 from __future__ import annotations
 
@@ -10,16 +10,23 @@ import json
 import os
 from pathlib import Path
 import re
+import ssl
+import sys
 import tempfile
 import threading
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPSHandler, HTTPRedirectHandler, Request, build_opener
 
+from botocore.httpsession import get_cert_path
 from packaging.version import InvalidVersion, Version
 
 
+_REPOSITORY = "Jerryzjy/S3-File-Manager"
+MAC_RELEASES_API = f"https://api.github.com/repos/{_REPOSITORY}/releases?per_page=30"
+_RELEASE_ASSETS = f"https://github.com/{_REPOSITORY}/releases/download"
 MAX_MANIFEST_BYTES = 64 * 1024
+_MAX_RELEASES_BYTES = 2 * 1024 * 1024
 MAX_UPDATE_BYTES = 1024 * 1024 * 1024
 _READ_SIZE = 256 * 1024
 _TIMEOUT = 20
@@ -35,6 +42,14 @@ class UpdateRelease:
     version: str
     url: str
     sha256: str
+    size: int
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class MacUpdateRelease:
+    version: str
+    url: str
     size: int
     notes: str = ""
 
@@ -72,7 +87,14 @@ class _UpdateRedirectHandler(HTTPRedirectHandler):
 def _open(url: str, allow_loopback_http: bool):
     safe_url = validate_feed_url(url, allow_loopback_http=allow_loopback_http)
     request = Request(safe_url, headers={"User-Agent": "S3FileManager-Updater", "Accept-Encoding": "identity"})
-    opener = build_opener(_UpdateRedirectHandler(allow_loopback_http))
+    redirects = _UpdateRedirectHandler(allow_loopback_http)
+    if sys.platform == "darwin":
+        # Packaged Python may have no system OpenSSL certificate directory.
+        context = ssl.create_default_context()
+        context.load_verify_locations(get_cert_path(True))
+        opener = build_opener(redirects, HTTPSHandler(context=context))
+    else:
+        opener = build_opener(redirects)
     response = opener.open(request, timeout=_TIMEOUT)
     if response.getcode() != 200:
         response.close()
@@ -106,16 +128,16 @@ def fetch_update(
             actual_url = response.geturl()
             raw = response.read(MAX_MANIFEST_BYTES + 1)
     except HTTPError as exc:
-        raise UpdateError(f"更新服务器返回 HTTP {exc.code}。请检查更新地址。") from None
+        raise UpdateError(f"更新服务器返回 HTTP {exc.code}。请稍后重试。") from None
     except (OSError, HTTPException, URLError, ValueError):
-        raise UpdateError("无法连接更新服务器。请检查网络和更新地址。") from None
+        raise UpdateError("无法连接更新服务器。请检查网络后重试。") from None
     if len(raw) > MAX_MANIFEST_BYTES:
         raise UpdateError("更新清单超过大小限制。")
 
     try:
         manifest = json.loads(raw)
     except (UnicodeError, ValueError, RecursionError):
-        raise UpdateError("无法读取更新清单。请确认更新地址指向有效的 JSON 文件。") from None
+        raise UpdateError("无法读取更新清单。请稍后重试。") from None
     if not isinstance(manifest, dict) or type(manifest.get("schema_version")) is not int or manifest["schema_version"] != 1:
         raise UpdateError("更新清单格式不受支持。")
     version = manifest.get("version")
@@ -135,6 +157,56 @@ def fetch_update(
     if newer <= installed:
         return None
     return UpdateRelease(version=version, url=asset_url, sha256=digest.lower(), size=size, notes=notes)
+
+
+def fetch_mac_update(current_version: str, architecture: str) -> MacUpdateRelease | None:
+    """Find the newest published release with an installer for this Mac."""
+    installed = _parse_version(current_version)
+    if architecture not in {"arm64", "x86_64"}:
+        raise UpdateError("当前 Mac 架构暂不支持应用内更新检查。")
+    try:
+        with _open(MAC_RELEASES_API, False) as response:
+            raw = response.read(_MAX_RELEASES_BYTES + 1)
+    except HTTPError as exc:
+        raise UpdateError(f"更新服务器返回 HTTP {exc.code}。请稍后重试。") from None
+    except (OSError, HTTPException, URLError, ValueError):
+        raise UpdateError("无法连接更新服务器。请检查网络后重试。") from None
+    if len(raw) > _MAX_RELEASES_BYTES:
+        raise UpdateError("版本列表超过大小限制。请稍后重试。")
+    try:
+        releases = json.loads(raw)
+    except (UnicodeError, ValueError, RecursionError):
+        raise UpdateError("无法读取版本列表。请稍后重试。") from None
+    if not isinstance(releases, list):
+        raise UpdateError("版本列表格式不受支持。")
+
+    latest = None
+    newest = installed
+    for release in releases:
+        if not isinstance(release, dict) or release.get("draft") is not False:
+            continue
+        tag = release.get("tag_name")
+        if not isinstance(tag, str) or not tag.startswith("v"):
+            continue
+        try:
+            version = _parse_version(tag)
+        except UpdateError:
+            continue
+        assets = release.get("assets")
+        if version <= newest or not isinstance(assets, list):
+            continue
+        asset_name = f"S3FileManager-{tag[1:]}-macos-{architecture}.dmg"
+        url = f"{_RELEASE_ASSETS}/{tag}/{asset_name}"
+        for asset in assets:
+            if not isinstance(asset, dict) or asset.get("name") != asset_name or asset.get("state") != "uploaded":
+                continue
+            size = asset.get("size")
+            if type(size) is int and size > 0:
+                notes = release.get("body")
+                latest = MacUpdateRelease(tag[1:], url, size, notes[:12000] if isinstance(notes, str) else "")
+                newest = version
+                break
+    return latest
 
 
 def download_update(

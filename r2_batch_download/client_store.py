@@ -95,6 +95,18 @@ def _preferences(values: Any) -> dict[str, Any]:
     update_feed = _text(values.get("update_feed_url"), "update_feed_url", limit=4096)
     if update_feed:
         result["update_feed_url"] = update_feed
+    layout_defaults = {"file_view": "grid", "file_sort": -1, "file_descending": False, "file_page_size": 120,
+                       "startup_page": "files", "share_duration": 3600, "upload_workers": 4, "bucket_order": "saved"}
+    choices = {"file_view": ("grid", "list"), "file_sort": (-1, 0, 1, 2, 3),
+               "file_descending": (True, False), "file_page_size": (60, 120, 240),
+               "startup_page": ("files", "upload", "tasks", "overview"),
+               "share_duration": (900, 3600, 86400, 604800), "upload_workers": (1, 2, 4, 6, 8),
+               "bucket_order": ("saved", "name", "provider")}
+    for name, default in layout_defaults.items():
+        value = values.get(name, default)
+        if type(value) is type(default) and value in choices[name]:
+            if value != default:
+                result[name] = value
     return result
 
 
@@ -105,6 +117,18 @@ def _profile_metadata(values: Any) -> dict[str, Any]:
     if not result["id"].strip() or not result["bucket"].strip():
         raise ValueError("连接配置缺少标识或存储桶名称。")
     result["name"] = result["name"] or result["bucket"]
+    public_url = _text(values.get("public_url"), "public_url", limit=2048)
+    if public_url:
+        result["public_url"] = public_url
+    last_sync = _text(values.get("last_sync"), "last_sync", limit=32)
+    if last_sync:
+        result["last_sync"] = last_sync
+    history = values.get("sync_history")
+    if isinstance(history, list):
+        result["sync_history"] = [
+            record for record in history[-20:] if isinstance(record, list) and len(record) == 2
+            and all(isinstance(item, str) and len(item) <= 32 and "\x00" not in item for item in record)
+        ]
     provider = _text(values.get("provider"), "provider", "r2", limit=16)
     if provider not in {"r2", "b2", "s3"}:
         raise ValueError("存储服务无法识别。")

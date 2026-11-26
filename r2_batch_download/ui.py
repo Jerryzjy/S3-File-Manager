@@ -7,14 +7,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QSize, QTimer, Signal
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QSize, QTimer, Signal
 from PySide6.QtGui import QFont, QIcon, QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton, QToolButton,
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QScrollArea,
     QLineEdit, QCheckBox, QDialog, QDialogButtonBox, QFileDialog,
     QComboBox, QProgressBar, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView, QMessageBox, QSizePolicy,
+    QHeaderView, QAbstractItemView, QMessageBox, QSizePolicy, QButtonGroup, QStyle,
 )
 import qtawesome as qta
 
@@ -52,8 +52,9 @@ QPushButton#primary:disabled { background: #DFE4F7; color: #7380A2; border-color
 QPushButton#ghost, QFrame#sidebar QPushButton#sidebarGhost { border-color: transparent; background: transparent; padding: 6px 8px; }
 QPushButton#ghost:hover { background: #EBEFFD; }
 QPushButton#nav { border: 1px solid transparent; background: transparent; padding: 9px 25px; color: #56657D; }
-QPushButton#nav:checked { background: #FFFFFF; color: #303CAB; font-weight: 600; border: 1px solid #DDE4F5; }
+QPushButton#nav:checked { color: #303CAB; }
 QFrame#navGroup { background: #EEF1F8; border: 1px solid #E5EAF3; border-radius: 10px; }
+QFrame#navIndicator { background: #FFFFFF; border: 1px solid #DDE4F5; border-radius: 7px; }
 QPushButton#viewToggle { padding: 7px 8px; border: 1px solid transparent; background: transparent; }
 QPushButton#viewToggle:checked { color: #303CAB; background: #E7EBFE; }
 QFrame#bucket { border: 1px solid transparent; border-radius: 9px; background: #27334D; }
@@ -90,6 +91,15 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
 QFrame#statusbar { border-top: 1px solid #E2E7F0; background: #FFFFFF; }
 QDialog { background: #FFFFFF; }
+QDialog#settingsDialog { background: #F4F6FA; }
+QFrame#settingsSidebar { background: #FFFFFF; border-right: 1px solid #E2E7F0; }
+QFrame#settingsCard { background: #FFFFFF; border: 1px solid #E2E7F0; border-radius: 10px; }
+QPushButton#settingsNav { text-align: left; border: 1px solid transparent; background: transparent; }
+QPushButton#settingsNav:hover { background: #F1F3FA; }
+QPushButton#settingsNav:checked { color: #303CAB; background: #E7EBFE; font-weight: 600; }
+QPushButton#settingsNav:focus { border-color: #8290F9; }
+QFrame#uploadDrop { background: #FFFFFF; border: 1px dashed #A8B5D2; border-radius: 12px; }
+QFrame#uploadDrop[dragActive="true"] { background: #EDF0FE; border: 2px dashed #4452CB; }
 QLabel#fieldLabel { font-size: 12px; color: #465875; font-weight: 500; }
 QLabel#helper { color: #56657D; font-size: 11px; }
 QLabel#success { color: #087450; background: #EDFAF3; padding: 9px 11px; border-radius: 6px; font-size: 12px; }
@@ -117,6 +127,49 @@ def label(text: str, name: str = "", wrap: bool = False) -> QLabel:
         result.setObjectName(name)
     result.setWordWrap(wrap)
     return result
+
+
+class TabStrip(QFrame):
+    def __init__(self, tabs: tuple[QPushButton, ...]) -> None:
+        super().__init__()
+        self.setObjectName("navGroup")
+        self.setFixedHeight(44)
+        self.indicator = QFrame(self)
+        self.indicator.setObjectName("navIndicator")
+        self.indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.indicator.hide()
+        self.animation = QPropertyAnimation(self.indicator, b"geometry", self)
+        self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.group = QButtonGroup(self)
+        controls = QHBoxLayout(self)
+        controls.setContentsMargins(4, 4, 4, 4)
+        for tab in tabs:
+            tab.setCheckable(True)
+            self.group.addButton(tab)
+            controls.addWidget(tab)
+        tabs[0].setChecked(True)
+
+    def select(self, tab: QPushButton, *, animate: bool = True) -> None:
+        tab.setChecked(True)
+        self.layout().activate()
+        target = tab.geometry()
+        duration = min(170, self.style().styleHint(QStyle.StyleHint.SH_Widget_Animation_Duration, None, self))
+        self.animation.stop()
+        if animate and duration > 0 and self.indicator.isVisible() and self.indicator.geometry() != target:
+            self.animation.setDuration(duration)
+            self.animation.setStartValue(self.indicator.geometry())
+            self.animation.setEndValue(target)
+            self.animation.start()
+        else:
+            self.indicator.setGeometry(target)
+            self.indicator.show()
+            self.indicator.lower()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        current = self.group.checkedButton()
+        if current is not None:
+            self.select(current, animate=False)
 
 
 def button(text: str = "", glyph: str = "", *, kind: str = "", callback: Any = None, tooltip: str = "") -> QPushButton:
@@ -265,6 +318,8 @@ class BucketCard(QFrame):
         bottom.addStretch()
         bottom.addWidget(label(profile.get("size_label", ""), "bucketMeta"))
         layout.addLayout(bottom)
+        if profile.get("synced_at"):
+            layout.addWidget(label(f"最近同步  {profile['synced_at']}", "bucketMeta"))
 
     def mousePressEvent(self, event: Any) -> None:
         if event.button() == Qt.MouseButton.LeftButton:

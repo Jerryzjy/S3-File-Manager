@@ -16,6 +16,14 @@ from .ui import ERROR, button, label, size_text
 from .upload import UploadItem, plan_upload, upload_error
 
 
+def choose_upload_sources(parent: QWidget, *, folder: bool) -> tuple[Path, ...]:
+    if folder:
+        path = QFileDialog.getExistingDirectory(parent, "选择上传文件夹")
+        return (Path(path),) if path else ()
+    paths, _ = QFileDialog.getOpenFileNames(parent, "选择上传文件")
+    return tuple(map(Path, paths))
+
+
 class UploadPreview(QAbstractTableModel):
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
@@ -132,14 +140,14 @@ class UploadDialog(QDialog):
         self.timer.start(75)
 
     def choose_files(self) -> None:
-        paths, _ = QFileDialog.getOpenFileNames(self, "选择上传文件")
+        paths = choose_upload_sources(self, folder=False)
         if paths:
-            self.check_sources(tuple(map(Path, paths)))
+            self.check_sources(paths)
 
     def choose_folder(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "选择上传文件夹")
-        if path:
-            self.check_sources((Path(path),))
+        paths = choose_upload_sources(self, folder=True)
+        if paths:
+            self.check_sources(paths)
 
     def dragEnterEvent(self, event) -> None:
         urls = event.mimeData().urls()

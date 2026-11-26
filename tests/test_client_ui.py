@@ -12,12 +12,12 @@ from unittest.mock import Mock, patch
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QMimeData, Qt, QUrl
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit, QPushButton
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QLabel, QLineEdit, QPushButton
 
-from r2_batch_download import client
+from r2_batch_download import DEFAULT_UPDATE_FEED, client, update_dialog
 
 
 class _DeferredThread:
@@ -156,9 +156,108 @@ class ClientUiTests(unittest.TestCase):
         self.assertTrue(window.empty_action.isEnabled())
         self.assertFalse(window.download_button.isEnabled())
         self.assertFalse(window.download_all_button.isEnabled())
+        self.assertEqual(window.download_all_button.text(), "下载整桶")
         self.assertFalse(any("示例" in child.text() or "演示" in child.text() for child in window.findChildren(QLabel)))
         self.assertEqual(_DeferredThread.instances, [])
         self.create_client.assert_not_called()
+
+    def test_settings_checks_official_source_and_stages_windows_install(self) -> None:
+        self.state["preferences"]["update_feed_url"] = "https://legacy.example.test/update.json"
+        window = self._make_window()
+        release = client.UpdateRelease("1.3.0", "https://example.test/application.exe", "a" * 64, 4096, "版本说明")
+        with tempfile.TemporaryDirectory() as temporary:
+            staged = Path(temporary) / "update.exe"
+            staged.touch()
+
+            def exercise(dialog: client.SettingsDialog) -> int:
+                dialog.show()
+                navigation = next(item for item in dialog.findChildren(QPushButton) if item.text() == "软件更新")
+                navigation.click()
+                updates = dialog.updates
+                self.assertTrue(updates.isVisible())
+                self.assertFalse(updates.findChildren(QLineEdit))
+                self.assertEqual(_DeferredThread.instances, [])
+                updates.check_button.click()
+                _DeferredThread.instances[-1].complete()
+                updates.poll()
+                self.assertIn("发现新版 v1.3.0", updates.status.text())
+                self.assertEqual(updates.notes.toPlainText(), release.notes)
+
+                window.transfer_running = True
+                updates.install_button.click()
+                self.assertIn("请先暂停", updates.status.text())
+                self.assertEqual(len(_DeferredThread.instances), 1)
+                window.transfer_running = False
+                updates.install_button.click()
+                self.assertTrue(updates.progress.isVisible())
+                updates.cancel_button.click()
+                _DeferredThread.instances[-1].complete()
+                updates.poll()
+                self.assertEqual(updates.status.text(), "已取消下载。")
+                self.assertFalse(staged.exists())
+                staged.touch()
+                updates.install_button.click()
+                _DeferredThread.instances[-1].complete()
+                updates.poll()
+                return dialog.result()
+
+            with (patch.object(client.SettingsDialog, "exec", exercise),
+                  patch.object(update_dialog, "fetch_update", return_value=release) as fetch,
+                  patch.object(update_dialog, "download_update", return_value=staged),
+                  patch.object(update_dialog.sys, "frozen", True, create=True),
+                  patch.object(update_dialog.sys, "platform", "win32")):
+                window.settings_button.click()
+
+            fetch.assert_called_once_with(DEFAULT_UPDATE_FEED, client.VERSION)
+            self.assertEqual(window._update_pending, (staged, release.sha256, window.writer.saved_revision))
+            self.assertEqual(self.saved[-1][2]["update_feed_url"], "https://legacy.example.test/update.json")
+            window._update_pending = None
+
+    def test_upload_tab_uses_the_selected_bucket_and_existing_upload_preflight(self) -> None:
+        self.state["profiles"] = [self._profile(), {
+            **self._profile("b2-profile"), "provider": "b2", "bucket": "b2-test-bucket",
+        }]
+        window = self._make_window()
+        window.navigate("reports/")
+        self.assertEqual(window.download_all_button.text(), "下载目录")
+        window.upload_nav.click()
+        self.assertEqual(window.pages.currentIndex(), client.UPLOAD_PAGE)
+        self.assertTrue(window.upload_nav.isChecked())
+        self.assertFalse(window.files_nav.isChecked())
+        self.assertEqual(window.upload_target.text(), "目标位置  r2://my-real-bucket/reports/")
+
+        window.current_profile()["secret_access_key"] = "test-secret-key"
+        source = Path("report.csv")
+        selected = Mock()
+        selected.exec.return_value = QDialog.DialogCode.Rejected
+        with (patch.object(client, "choose_upload_sources", return_value=(source,)) as choose,
+              patch.object(client, "UploadDialog", return_value=selected) as preview):
+            window.upload_choose_files.click()
+        choose.assert_called_once_with(window, folder=False)
+        preview.assert_called_once_with(window, client.connection_of(window.current_profile()), "reports/")
+        selected.check_sources.assert_called_once_with((source,))
+
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(str(source.resolve()))])
+        enter = Mock()
+        enter.mimeData.return_value = mime
+        drop = Mock()
+        drop.mimeData.return_value = mime
+        selected.check_sources.reset_mock()
+        with patch.object(client, "UploadDialog", return_value=selected):
+            window.upload_drop.dragEnterEvent(enter)
+            enter.accept.assert_called_once()
+            window.upload_drop.dropEvent(drop)
+            drop.accept.assert_called_once()
+            selected.check_sources.assert_not_called()
+            self._flush()
+        selected.check_sources.assert_called_once_with((source.resolve(),))
+
+        window.change_bucket("b2-profile")
+        self.assertEqual(window.pages.currentIndex(), client.UPLOAD_PAGE)
+        self.assertFalse(window.upload_drop.acceptDrops())
+        self.assertTrue(window.upload_connect.isVisible())
+
         self.list_objects.assert_not_called()
         self.transfer.assert_not_called()
 
@@ -309,7 +408,7 @@ class ClientUiTests(unittest.TestCase):
         self.assertTrue(pending_scan.is_set())
         self.assertEqual(self.saved[-1][0], [])
         self.assertEqual([task["id"] for task in self.saved[-1][1]], ["finished"])
-        self.assertIn("不会删除 R2", self.question.call_args.args[2])
+        self.assertIn("远端存储桶和文件将保留", self.question.call_args.args[2])
         self.create_client.assert_not_called()
         self.list_objects.assert_not_called()
         self.transfer.assert_not_called()
@@ -493,6 +592,60 @@ class ClientUiTests(unittest.TestCase):
         self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
         self.assertEqual(self.saved, [])
         self.assertNotIn("test-secret-key", dialog.validation.text())
+
+    def test_connection_wizard_preserves_fields_and_validates_public_address(self) -> None:
+        window = self._make_window()
+        dialog = client.ConnectionDialog(window)
+        self.addCleanup(dialog.deleteLater)
+        self.assertEqual(dialog.steps.currentIndex(), 0)
+        dialog.next_button.click()
+        self.assertEqual(dialog.steps.currentIndex(), 1)
+        dialog.next_button.click()
+        self.assertIn("连接名称", dialog.validation.text())
+        for field, value in {"name": "测试桶", "bucket": "test-bucket", "account_id": "abcdef",
+                             "access_key_id": "access-test", "secret_access_key": "private-test"}.items():
+            dialog.fields[field].setText(value)
+        dialog.next_button.click()
+        self.assertEqual(dialog.steps.currentIndex(), 2)
+        dialog.public_url.setText("https://user@public.example.com")
+        dialog.next_button.click()
+        self.assertEqual(dialog.steps.currentIndex(), 2)
+        dialog.public_url.setText("https://public.example.com")
+        dialog.next_button.click()
+        self.assertEqual(dialog.steps.currentIndex(), 3)
+        self.assertIn("public.example.com", dialog.review.text())
+        self.assertNotIn("private-test", dialog.review.text())
+        dialog.previous_button.click()
+        self.assertEqual(dialog.public_url.text(), "https://public.example.com")
+        self.assertEqual(_DeferredThread.instances, [])
+
+    def test_direction_filter_and_display_settings_affect_the_desktop(self) -> None:
+        self.state["profiles"] = [self._profile()]
+        self.state["tasks"] = [self._task("one", "failed"), {**self._task("two", "paused"), "direction": "upload"}]
+        window = self._make_window()
+        window.tasks_nav.click()
+        window.direction_picker.setCurrentIndex(window.direction_picker.findData("upload"))
+        self.assertEqual(list(window.task_widgets), ["two"])
+        window.direction_picker.setCurrentIndex(0)
+        self._flush()
+        self.assertTrue(window.task_widgets["one"]["failure"].isVisible())
+
+        def exercise(dialog: client.SettingsDialog) -> int:
+            navigation = next(item for item in dialog.findChildren(QPushButton) if item.text() == "文件显示")
+            navigation.click()
+            fields = {item.accessibleName(): item for item in dialog.findChildren(QComboBox)}
+            fields["每页显示"].setCurrentIndex(fields["每页显示"].findData(60))
+            fields["默认视图"].setCurrentIndex(fields["默认视图"].findData("list"))
+            panel = fields["默认视图"].parentWidget().parentWidget()
+            save = next(item for item in panel.findChildren(QPushButton) if item.text() == "保存设置")
+            save.click()
+            return int(QDialog.DialogCode.Rejected)
+
+        with patch.object(client.SettingsDialog, "exec", exercise):
+            window.settings_button.click()
+        self.assertEqual(window.PAGE_SIZE, 60)
+        self.assertEqual(window.view_mode, "list")
+        self.assertEqual(self.saved[-1][2]["file_view"], "list")
 
     def test_cancelled_queued_task_cannot_retry_until_previous_batch_releases_ownership(self) -> None:
         self.state["profiles"] = [self._profile()]
