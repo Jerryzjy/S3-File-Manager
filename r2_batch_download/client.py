@@ -30,7 +30,7 @@ from . import APP_NAME, DEFAULT_UPDATE_FEED, __version__
 from .archive import archive_changes
 from .ui import ACCENT, ERROR, MUTED, SUCCESS, BucketCard, FileCard, app_icon, app_style, button, file_style, icon, label, size_text
 from .catalog import immediate_children, normalize_objects
-from .client_store import load_state, save_state, state_path
+from .client_store import load_state, remember_secret_label, save_state, state_path
 from .diagnostics import export_diagnostics, install_diagnostics
 from .update_dialog import UpdateDialog
 from .update_install import UpdateInstallError, launch_update, schedule_update_cleanup
@@ -158,7 +158,7 @@ class ConnectionDialog(QDialog):
         secret.setEchoMode(QLineEdit.EchoMode.Password)
         reveal = secret.addAction(icon("eye-outline"), QLineEdit.ActionPosition.TrailingPosition)
         reveal.triggered.connect(lambda: secret.setEchoMode(QLineEdit.EchoMode.Normal if secret.echoMode() == QLineEdit.EchoMode.Password else QLineEdit.EchoMode.Password))
-        self.remember = QCheckBox("记住密钥（使用当前 Windows 用户加密保存）")
+        self.remember = QCheckBox(remember_secret_label())
         self.remember.setChecked(bool(self.profile.get("remember_secret", False)))
         outer.addWidget(self.remember)
         self.advanced = QCheckBox("自定义 S3 Endpoint")
@@ -747,7 +747,8 @@ class ClientWindow(QMainWindow):
         bucket_scroll.setWidget(bucket_host)
         side.addWidget(bucket_scroll, 1)
         side.addWidget(label("连接与任务记录保存在本机。", "tiny", True))
-        side.addWidget(button("检查更新", "update", kind="sidebarAction", callback=self.show_update))
+        update_title = "查看发布版本" if sys.platform == "darwin" else "检查更新"
+        side.addWidget(button(update_title, "update", kind="sidebarAction", callback=self.show_update))
         side.addWidget(button("下载设置", "cog-outline", kind="sidebarAction", callback=self.show_settings))
         side.addWidget(button("导出诊断", "file-document-outline", kind="sidebarAction", callback=self.save_diagnostics))
         shell.addWidget(sidebar)
@@ -2519,6 +2520,9 @@ class ClientWindow(QMainWindow):
         threading.Thread(target=collect, daemon=True, name="s3fm-diagnostics-export").start()
 
     def show_update(self) -> None:
+        if sys.platform == "darwin":
+            QDesktopServices.openUrl(QUrl("https://github.com/Jerryzjy/S3-File-Manager/releases"))
+            return
         dialog = UpdateDialog(self, VERSION, self.preferences.get("update_feed_url") or DEFAULT_UPDATE_FEED,
                               state_path().parent / "update-downloads", self.can_install_update)
         dialog.exec()
@@ -2864,7 +2868,7 @@ def main(update_workspace: str = "") -> None:
     application.setApplicationDisplayName(APP_NAME)
     application.setWindowIcon(app_icon())
     application.setStyle("Fusion")
-    application.setFont(QFont("Microsoft YaHei UI", 10))
+    application.setFont(QFont("PingFang SC" if sys.platform == "darwin" else "Microsoft YaHei UI", 10))
     application.setStyleSheet(app_style())
     window = ClientWindow()
     install_diagnostics(lambda text: window.events.put({"kind": "background_error", "error": text}))

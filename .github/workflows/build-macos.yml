@@ -1,0 +1,92 @@
+name: Build macOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-macos.yml'
+      - 'S3FileManager.spec'
+      - 'client_launcher.py'
+      - 'pyproject.toml'
+      - 'requirements.txt'
+      - 'tools/package_release.py'
+      - 'r2_batch_download/**'
+      - 'tests/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.arch == 'x86_64' && 'x64' || 'arm64' }}
+          cache: pip
+      - name: Install build dependencies
+        run: python -m pip install -r requirements.txt 'pyinstaller>=6.18,<7'
+      - name: Test the client
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests -q
+      - name: Build and verify the app
+        env:
+          BUILD_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          version=$(python -c 'from r2_batch_download import __version__; print(__version__)')
+          test "$(uname -m)" = "$BUILD_ARCH"
+          python -m PyInstaller --noconfirm S3FileManager.spec
+          app='dist/S3 File Manager.app'
+          binary="$app/Contents/MacOS/S3FileManager"
+          test "$(lipo -archs "$binary")" = "$BUILD_ARCH"
+          codesign --verify --deep --strict "$app"
+          app_log="$RUNNER_TEMP/s3fm-startup.log"
+          env HOME="$RUNNER_TEMP/s3fm-home" "$binary" > "$app_log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          for _ in {1..20}; do
+            if ! kill -0 "$pid" 2>/dev/null; then
+              cat "$app_log"
+              exit 1
+            fi
+            if test -f "$RUNNER_TEMP/s3fm-home/Library/Application Support/S3 File Manager/logs/native-fault.log"; then
+              break
+            fi
+            sleep 1
+          done
+          test -f "$RUNNER_TEMP/s3fm-home/Library/Application Support/S3 File Manager/logs/native-fault.log"
+          sleep 3
+          kill -0 "$pid"
+          kill "$pid"
+          wait "$pid" || true
+          trap - EXIT
+          staging="$RUNNER_TEMP/s3fm-disk"
+          mkdir -p "$staging" dist/release
+          ditto "$app" "$staging/S3 File Manager.app"
+          ln -s /Applications "$staging/Applications"
+          python tools/package_release.py "$staging" --macos-docs --github-repository "$GITHUB_REPOSITORY" --github-tag "v$version"
+          image="dist/release/S3FileManager-$version-macos-$BUILD_ARCH.dmg"
+          hdiutil create -volname 'S3 File Manager' -srcfolder "$staging" -format UDZO -ov "$image"
+          hdiutil verify "$image"
+          shasum -a 256 "$image"
+      - name: Upload installation image
+        uses: actions/upload-artifact@v4
+        with:
+          name: S3FileManager-macos-${{ matrix.arch }}
+          path: dist/release/*.dmg
+          if-no-files-found: error

@@ -4,13 +4,16 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 from typing import Any
 
 from .desktop_config import _protect_secret, _unprotect_secret
+from . import mac_keychain
 
 
 _PROTECTION = "windows-dpapi-current-user-v1"
+_MAC_PROTECTION = "macos-keychain-fernet-v1"
 _PROFILE_TEXT_FIELDS = ("id", "name", "bucket", "account_id", "access_key_id", "endpoint_url")
 _TASK_TEXT_FIELDS = (
     "id", "key", "name", "bucket", "profile_id", "error", "path", "output_dir", "prefix", "created_at",
@@ -24,10 +27,16 @@ _ACTIVE_STATUSES = {"queued", "downloading", "cancelling"}
 
 
 def state_path() -> Path:
-    """Return the per-user state path, independent of an EXE's directory."""
+    """Return the state path independently of the installation directory."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "S3 File Manager" / "client-state.json"
     appdata = os.environ.get("APPDATA")
     directory = Path(appdata) if appdata else Path.home() / ".config"
     return directory / "R2BatchDownloader" / "client-state.json"
+
+
+def remember_secret_label() -> str:
+    return "记住密钥（使用 macOS 钥匙串保护）" if sys.platform == "darwin" else "记住密钥（使用当前 Windows 用户加密保存）"
 
 
 def _empty_state() -> dict[str, Any]:
@@ -215,15 +224,17 @@ def load_state() -> dict[str, Any]:
         profile["secret_access_key"] = ""
         if profile["remember_secret"]:
             protected = values.get("protected_secret")
-            if not isinstance(protected, str) or not protected or values.get("secret_protection") != _PROTECTION:
+            protection = _MAC_PROTECTION if sys.platform == "darwin" else _PROTECTION
+            if not isinstance(protected, str) or not protected or values.get("secret_protection") != protection:
                 profile["remember_secret"] = False
                 warnings.append("部分连接没有可用的加密密钥，请重新输入 Secret Access Key。")
             else:
                 try:
-                    profile["secret_access_key"] = _unprotect_secret(protected)
-                except (OSError, ValueError, UnicodeError):
+                    profile["secret_access_key"] = (mac_keychain.unprotect_secret(state_path(), protected)
+                                                    if sys.platform == "darwin" else _unprotect_secret(protected))
+                except (OSError, ValueError, UnicodeError, ImportError):
                     profile["remember_secret"] = False
-                    warnings.append("部分密钥无法解密，请重新输入；密钥只能由原 Windows 用户读取。")
+                    warnings.append("部分密钥无法解密，请检查当前用户的系统密钥存储后重新输入。")
         state["profiles"].append(profile)
 
     tasks = stored.get("tasks", [])
@@ -281,10 +292,14 @@ def save_state(profiles: list[dict[str, Any]], tasks: list[dict[str, Any]], pref
             if not isinstance(secret, str) or not secret.strip():
                 raise ValueError("已选择记住密钥，但未填写 Secret Access Key。")
             try:
-                profile["protected_secret"] = _protect_secret(secret)
-            except (OSError, ValueError, UnicodeError) as exc:
+                if sys.platform == "darwin":
+                    profile["protected_secret"] = mac_keychain.protect_secret(state_path(), secret)
+                    profile["secret_protection"] = _MAC_PROTECTION
+                else:
+                    profile["protected_secret"] = _protect_secret(secret)
+                    profile["secret_protection"] = _PROTECTION
+            except (OSError, ValueError, UnicodeError, ImportError) as exc:
                 raise ValueError("无法加密保存密钥，请取消“记住密钥”后重试。") from exc
-            profile["secret_protection"] = _PROTECTION
         stored["profiles"].append(profile)
     credentials = _credential_values(profiles)
     task_ids: set[str] = set()

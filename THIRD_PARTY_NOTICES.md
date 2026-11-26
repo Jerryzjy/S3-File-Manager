@@ -14,6 +14,7 @@
 | urllib3 | HTTP | MIT |
 | packaging | 更新版本比较 | Apache 2.0 / BSD |
 | PyInstaller | 打包 | GPLv2 with bootloader exception |
+| keyring / cryptography | macOS 钥匙串与本地密钥加密 | MIT / Apache 2.0 / BSD（按具体组件条款） |
 
 Qt 和 PySide6 使用动态库。发布包的 `licenses/` 提供 GPL-3.0、LGPL-3.0 和随依赖分发的许可文本。首次公开的 Windows 预发布版使用 Qt 和 PySide6 / Shiboken6 6.12.0。 [Qt 6.12.0 源码](https://download.qt.io/official_releases/qt/6.12/6.12.0/single/qt-everywhere-src-6.12.0.tar.xz) · [PySide6 / Shiboken6 6.12.0 源码](https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.12.0-src/pyside-setup-everywhere-src-6.12.0.tar.xz)
 

@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -87,6 +88,7 @@ class ClientStoreTests(unittest.TestCase):
         self.assertTrue(state["profiles"][0]["remember_secret"])
 
     def test_removing_profile_or_unchecking_remember_drops_its_ciphertext(self) -> None:
+        self.enterContext(patch.object(client_store, "sys", SimpleNamespace(platform="win32")))
         profile = {**self.profile, "remember_secret": True}
         with patch.object(client_store, "_protect_secret", return_value="encrypted-one"):
             client_store.save_state([profile], [self.task], self.preferences)
@@ -169,6 +171,7 @@ class ClientStoreTests(unittest.TestCase):
             self.assertIn("_warning", state)
 
     def test_write_failure_and_encryption_failure_preserve_old_state(self) -> None:
+        self.enterContext(patch.object(client_store, "sys", SimpleNamespace(platform="win32")))
         client_store.save_state([self.profile], [self.task], self.preferences)
         content = self.path.read_text(encoding="utf-8")
         with patch.object(client_store.os, "replace", side_effect=PermissionError("denied")):
@@ -180,6 +183,19 @@ class ClientStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "无法加密保存密钥"):
                 client_store.save_state([{**self.profile, "remember_secret": True}], [], self.preferences)
         self.assertEqual(self.path.read_text(encoding="utf-8"), content)
+
+    def test_macos_state_uses_keychain_ciphertext(self) -> None:
+        profile = {**self.profile, "remember_secret": True}
+        with (patch.object(client_store, "sys", SimpleNamespace(platform="darwin")),
+              patch.object(client_store.mac_keychain, "protect_secret", return_value="encrypted-one") as protect,
+              patch.object(client_store.mac_keychain, "unprotect_secret", return_value=profile["secret_access_key"]) as unprotect):
+            client_store.save_state([profile], [], self.preferences)
+            protect.assert_called_once_with(self.path, profile["secret_access_key"])
+            stored = self._stored()["profiles"][0]
+            self.assertEqual(stored["secret_protection"], "macos-keychain-fernet-v1")
+            self.assertNotIn("secret_access_key", stored)
+            self.assertEqual(client_store.load_state()["profiles"][0]["secret_access_key"], profile["secret_access_key"])
+            unprotect.assert_called_once_with(self.path, "encrypted-one")
 
     def test_runtime_validation_rejects_unsafe_types_before_overwriting_state(self) -> None:
         client_store.save_state([], [], self.preferences)

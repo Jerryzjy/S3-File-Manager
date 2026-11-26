@@ -12,27 +12,8 @@ import sys
 import zipfile
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("release", type=Path, help="Versioned directory containing S3FileManager.exe")
-    parser.add_argument("--github-repository", metavar="OWNER/REPO", help="Use an absolute GitHub Release asset URL in the update manifest")
-    parser.add_argument("--github-tag", help="GitHub release tag (default: v<VERSION>)")
-    args = parser.parse_args()
-    project = Path(__file__).resolve().parents[1]
-    release = args.release.resolve()
-    version = release.name
-    if not re.fullmatch(r"[0-9][0-9A-Za-z._+-]{0,63}", version):
-        parser.error("release directory name must be the application version")
-    if args.github_tag and not args.github_repository:
-        parser.error("--github-tag requires --github-repository")
-    if args.github_repository and not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_-][A-Za-z0-9_.-]*", args.github_repository):
-        parser.error("--github-repository must have the form OWNER/REPO")
-    tag = args.github_tag or f"v{version}"
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag):
-        parser.error("GitHub release tag may contain letters, numbers, dots, hyphens and underscores")
-    executable = release / "S3FileManager.exe"
-    if not executable.is_file():
-        raise SystemExit(f"Build {executable.name} before packaging the release")
+def package_documents(project: Path, release: Path, repository: str | None, tag: str,
+                      extra_components: tuple[str, ...] = ()) -> None:
     guide_links = {"README.md": "使用说明.md", "CHANGELOG.md": "更新记录.md", "THIRD_PARTY_NOTICES.md": "第三方组件说明.md"}
     for name in ("README.md", "README.en.md"):
         guide = (project / name).read_text(encoding="utf-8")
@@ -44,11 +25,12 @@ def main() -> None:
         shutil.copy2(project / name, release / target)
     images = release / "docs" / "images"
     images.mkdir(parents=True, exist_ok=True)
-    for name in ("logo.png", "s3-file-manager.png"):
-        shutil.copy2(project / "docs" / "images" / name, images / name)
+    for image in (project / "docs" / "images").glob("*.png"):
+        shutil.copy2(image, images / image.name)
     notices = release / "licenses"
     notices.mkdir(parents=True, exist_ok=True)
-    for name in ("boto3", "botocore", "s3transfer", "jmespath", "python-dateutil", "urllib3", "six", "PySide6-Essentials", "shiboken6", "qtawesome", "QtPy", "PyInstaller", "certifi", "cryptography", "packaging"):
+    components = ("boto3", "botocore", "s3transfer", "jmespath", "python-dateutil", "urllib3", "six", "PySide6-Essentials", "shiboken6", "qtawesome", "QtPy", "PyInstaller", "certifi", "cryptography", "packaging") + extra_components
+    for name in components:
         distribution = metadata.distribution(name)
         folder = notices / name
         folder.mkdir(exist_ok=True)
@@ -68,11 +50,42 @@ def main() -> None:
         shutil.copy2(python_license, notices / "Python-LICENSE.txt")
     shutil.copy2(project / "LICENSE", notices / "GPL-3.0.txt")
     shutil.copy2(project / "docs" / "licenses" / "LGPL-3.0.txt", notices / "LGPL-3.0.txt")
-    if args.github_repository:
+    if repository:
         (release / "SOURCE.txt").write_text(
-            f"https://github.com/{args.github_repository}/tree/{tag}\n"
-            f"https://github.com/{args.github_repository}/archive/refs/tags/{tag}.zip\n", encoding="ascii",
+            f"https://github.com/{repository}/tree/{tag}\n"
+            f"https://github.com/{repository}/archive/refs/tags/{tag}.zip\n", encoding="ascii",
         )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("release", type=Path, help="Versioned directory containing S3FileManager.exe")
+    parser.add_argument("--github-repository", metavar="OWNER/REPO", help="Use an absolute GitHub Release asset URL in the update manifest")
+    parser.add_argument("--github-tag", help="GitHub release tag (default: v<VERSION>)")
+    parser.add_argument("--macos-docs", action="store_true", help="Populate the macOS disk image staging folder")
+    args = parser.parse_args()
+    project = Path(__file__).resolve().parents[1]
+    release = args.release.resolve()
+    version = release.name
+    if not args.macos_docs and not re.fullmatch(r"[0-9][0-9A-Za-z._+-]{0,63}", version):
+        parser.error("release directory name must be the application version")
+    if args.github_tag and not args.github_repository:
+        parser.error("--github-tag requires --github-repository")
+    if args.github_repository and not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_-][A-Za-z0-9_.-]*", args.github_repository):
+        parser.error("--github-repository must have the form OWNER/REPO")
+    tag = args.github_tag or f"v{version}"
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag):
+        parser.error("GitHub release tag may contain letters, numbers, dots, hyphens and underscores")
+    if args.macos_docs:
+        if not args.github_tag:
+            parser.error("--macos-docs requires an explicit source tag")
+        package_documents(project, release, args.github_repository, tag,
+                          ("keyring", "jaraco.classes", "jaraco.context", "jaraco.functools", "more-itertools"))
+        return
+    executable = release / "S3FileManager.exe"
+    if not executable.is_file():
+        raise SystemExit(f"Build {executable.name} before packaging the release")
+    package_documents(project, release, args.github_repository, tag)
     hasher = hashlib.sha256()
     with executable.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):

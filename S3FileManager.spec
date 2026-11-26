@@ -1,5 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
+import sys
+
+from r2_batch_download import __version__
 
 datas = [('r2_batch_download/preview_assets', 'r2_batch_download/preview_assets')]
 binaries = []
@@ -27,25 +30,19 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.datas,
-    [],
-    name='S3FileManager',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    version='version-info.txt',
-    icon='r2_batch_download/preview_assets/s3-file-manager.ico',
-)
+if sys.platform == 'darwin':
+    exe = EXE(pyz, a.scripts, [], name='S3FileManager', console=False, exclude_binaries=True, upx=False)
+    collected = COLLECT(exe, a.binaries, a.datas, name='S3FileManager', upx=False)
+    app = BUNDLE(
+        collected,
+        name='S3 File Manager.app',
+        icon='r2_batch_download/preview_assets/s3-file-manager.icns',
+        bundle_identifier='com.jerryzjy.s3-file-manager',
+        version=__version__.split('-')[0],
+        info_plist={'CFBundleDisplayName': 'S3 File Manager', 'CFBundleVersion': __version__.split('-')[0]},
+    )
+else:
+    exe = EXE(
+        pyz, a.scripts, a.binaries, a.datas, [], name='S3FileManager', console=False, upx=True,
+        version='version-info.txt', icon='r2_batch_download/preview_assets/s3-file-manager.ico',
+    )

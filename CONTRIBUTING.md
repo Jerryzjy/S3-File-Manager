@@ -10,7 +10,7 @@ Use the reporting channel in [SECURITY.md](SECURITY.md) for credential exposure,
 
 ## Development setup
 
-The supported development environment is Windows 10/11 x64 with Python 3.10 or newer.
+The development client runs on Windows and macOS with Python 3.10 or newer.
 
 ~~~powershell
 python -m venv .venv
@@ -19,6 +19,8 @@ python -m venv .venv
 ~~~
 
 The desktop application uses the current Windows user's application data directory. For isolated testing, set APPDATA to a temporary directory before starting the client.
+
+On macOS, use `python3 -m venv .venv`, then `.venv/bin/python -m pip install -r requirements.txt` and `.venv/bin/python client_launcher.py`. Application data is stored under `~/Library/Application Support/S3 File Manager/`.
 
 ## Tests
 
@@ -60,6 +62,10 @@ python tools/package_release.py dist/release/VERSION --github-repository Jerryzj
 ~~~
 
 Verify installation, launch and uninstall before publishing. Upload the setup file, portable ZIP, versioned update EXE and manifest to the matching Release. Update `updates/windows-x64.json` on `main` after the versioned EXE is publicly downloadable.
+
+## Build the macOS app
+
+On the target Mac architecture, install PyInstaller with `.venv/bin/python -m pip install pyinstaller`, then run `.venv/bin/python -m PyInstaller --noconfirm S3FileManager.spec`. The app bundle is `dist/S3 File Manager.app`. The [macOS build workflow](.github/workflows/build-macos.yml) tests both architectures, checks app startup and produces `.dmg` images.
 
 ## Pull requests
 

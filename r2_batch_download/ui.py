@@ -275,4 +275,5 @@ class BucketCard(QFrame):
 
 
 def app_style() -> str:
-    return STYLE.replace("__CHECK_ICON__", (Path(__file__).parent / "preview_assets" / "check-white.png").as_posix())
+    style = STYLE.replace("__CHECK_ICON__", (Path(__file__).parent / "preview_assets" / "check-white.png").as_posix())
+    return style.replace("Microsoft YaHei UI", "PingFang SC") if sys.platform == "darwin" else style

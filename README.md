@@ -1,41 +1,66 @@
 <p align="center"><img src="docs/images/logo.png" alt="" width="72" height="72"></p>
 <h1 align="center">S3 File Manager</h1>
-<p align="center">浏览对象存储、批量传输文件和增量归档的 Windows 桌面客户端。</p>
+<p align="center">连接 Cloudflare R2、Backblaze B2 和 S3 兼容存储，浏览文件、批量传输和增量归档。</p>
 <p align="center"><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 <p align="center">
-  <a href="https://github.com/Jerryzjy/S3-File-Manager/releases/tag/v1.3.0-rc.1"><img src="https://img.shields.io/badge/release-1.3.0--rc.1-4452CB?style=flat-square" alt="发布版本 1.3.0-rc.1"></a>
-  <img src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-0078D4?style=flat-square" alt="Windows 10 和 11，64 位">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-465472?style=flat-square" alt="GPL-3.0 许可证"></a>
+  <a href="https://github.com/Jerryzjy/S3-File-Manager/releases"><img src="docs/images/badge-releases.png" height="24" alt="GitHub Releases"></a>
+  <img src="docs/images/badge-windows.png" height="24" alt="Windows 10 和 11，64 位">
+  <a href="#下载与安装"><img src="docs/images/badge-macos.png" height="24" alt="macOS 预览版"></a>
+  <a href="LICENSE"><img src="docs/images/badge-license.png" height="24" alt="GPL-3.0 许可证"></a>
 </p>
 <p align="center">
-  <a href="https://github.com/Jerryzjy/S3-File-Manager/releases/download/v1.3.0-rc.1/S3FileManager-1.3.0-rc.1-windows-x64-setup.exe"><strong>下载 Windows 安装包</strong></a> · <a href="https://github.com/Jerryzjy/S3-File-Manager/releases">所有版本</a> · <a href="CHANGELOG.md">更新记录</a>
+  <a href="#下载与安装"><strong>下载与安装</strong></a> · <a href="#快速上手">快速上手</a> · <a href="#功能与支持范围">功能</a> · <a href="CHANGELOG.md">更新记录</a>
 </p>
 
 ![S3 File Manager 主界面](docs/images/s3-file-manager.png)
 
-## 功能
+## 下载与安装
 
-- 保存并切换 Cloudflare R2、Backblaze B2 和自定义 S3 连接，浏览目录、搜索和批量下载。
-- 批量下载文件或目录，保留目录结构。下载前检查可用空间和本地文件冲突。
-- 增量归档会预览新增、变化或本地缺失的文件，并保留目录中的其他文件。
-- R2 支持上传、分片续传、同名改名、桶内复制和限时下载链接。
-- 在文件页展开传输队列，查看任务进度。传输页支持按批次暂停、继续、重试和导出失败清单。
-- 在应用内检查更新和导出诊断。可选择用 Windows DPAPI 加密保存密钥。
+| 平台 | 安装方式 |
+| --- | --- |
+| Windows 10 / 11（x64） | 从 [Releases](https://github.com/Jerryzjy/S3-File-Manager/releases) 下载 `*-windows-x64-setup.exe`，运行后从开始菜单打开。也有便携 ZIP。旧版可用「检查更新」。 |
+| macOS（Apple 芯片、Intel） | 在 [Releases](https://github.com/Jerryzjy/S3-File-Manager/releases) 查看 macOS 预览版。Apple 芯片选 `*-macos-arm64.dmg`，Intel 选 `*-macos-x86_64.dmg`。打开镜像，将应用拖入「应用程序」。[构建状态](https://github.com/Jerryzjy/S3-File-Manager/actions/workflows/build-macos.yml) |
 
-## 安装与使用
+macOS 预览版通过 Releases 手动更新。镜像使用临时签名，尚无 Apple Developer ID 签名及公证。
 
-1. 下载并运行 `*-setup.exe`。安装后从开始菜单打开 **S3 File Manager**。安装时也可选择创建桌面快捷方式。
-2. 点击「添加存储桶」，选择存储服务，填写 Bucket、Access Key ID 和 Secret Access Key。R2 填写 Account ID。B2 填写桶页面上的 S3 Endpoint，使用 keyID 和 applicationKey。自定义 S3 填写 HTTPS Endpoint 和 Region。
-3. 点击「测试连接」，再选「连接并保存」。选择文件或目录，确认保存位置后开始下载。
-4. 文件页「更多操作」提供增量归档。选择文件或目录，确认保存位置和变更清单后开始。重复归档时选择同一范围和保存位置。
-5. 对于 R2，使用有目标桶读取和写入权限的密钥可以上传或复制。上传窗口支持拖入文件和文件夹，默认跳过同名对象。64 MiB 及以上的文件支持分片续传。源文件需要保留到传输完成。
-6. 选择一个 R2 文件，在「更多操作」生成限时下载链接，或将它复制为新名称。复制使用 R2 原生 S3 Endpoint，单文件上限约 4.995 GiB，并保留源对象及已存在的目标对象。
+## 快速上手
 
-## 连接故障
+1. 在左侧点击「添加存储桶」，选择服务并填写连接信息。
+2. 点击「测试连接」，通过后选择「连接并保存」。浏览、下载和归档可使用目标桶的只读密钥。
+3. 选中文件或文件夹，点击「下载所选」。确认保存目录、可用空间和同名文件处理方式后开始。点击底部「传输队列」可随时查看进度。
 
-浏览、下载和归档只需目标桶的读取权限。连接测试失败时，从服务商的桶页面核对 Endpoint、Region 和密钥权限。分片上传会话过期后可重新上传该文件。需要反馈异常时，可在侧栏导出诊断 ZIP。
+| 服务 | 要填写的信息 |
+| --- | --- |
+| Cloudflare R2 | Account ID、Bucket、Access Key ID、Secret Access Key。可选填自定义 HTTPS Endpoint。 |
+| Backblaze B2 | Bucket、桶页面的 S3 Endpoint、keyID、applicationKey。客户端从 Endpoint 读取 Region。 |
+| 自定义 S3 | Bucket、HTTPS Endpoint、Region、Access Key ID、Secret Access Key。 |
 
-[Releases](https://github.com/Jerryzjy/S3-File-Manager/releases) 也提供便携 ZIP。安装版和便携版共用当前 Windows 用户的配置。卸载保留配置、任务和已下载文件。
+## 功能与支持范围
+
+### 连接与文件浏览
+
+- **多桶连接**：保存多个 R2、B2 或自定义 S3 连接，在侧栏切换。可选择通过 Windows DPAPI 或 macOS 钥匙串保护保存的密钥。
+- **目录浏览**：支持网格、列表和分页。后台索引时，可先浏览已经返回的目录页。
+- **查找对象**：按名称或对象路径搜索，范围可选整桶或当前目录及子目录。筛选支持扩展名、大小和修改日期。可按列排序、查看详情及复制对象 Key。
+
+### 下载、上传与传输恢复
+
+- **批量下载**：选择多个文件、文件夹、当前目录或整桶。预检显示数量、总大小、磁盘空间和本地同名冲突，可保留对象目录结构。
+- **R2 上传**：在上传窗口选择或拖入本地文件和文件夹，预览目标对象 Key。同名可跳过、自动改名或确认覆盖。64 MiB 及以上自动使用分片上传。
+- **断点恢复**：下载会核对对象身份再续传。R2 大文件上传可在断网、暂停或重启后继续有效会话，未完成分片可在取消时清理。继续小文件上传时会从头传该文件。
+- **任务管理**：文件页可展开队列，传输任务页显示进度、速度和失败原因。可按批次暂停、继续、重试失败项、打开保存目录、导出失败 CSV 或清理任务记录。已完成的文件会保留。
+
+### 增量归档、复制与分享
+
+- **增量归档**：点击「更多操作 → 增量归档」。重复选择同一范围和本地目录，可按上次成功记录预览新增、变更和本地缺失文件，下载时保留本地其他资料。
+- **R2 桶内复制**：选择文件后，可复制到桶内目录，也可将单文件复制为新名称。使用 R2 原生 S3 Endpoint，单文件上限约 4.995 GiB。操作保留源对象和已存在的同名目标。
+- **R2 限时链接**：在「更多操作」为单个文件生成 15 分钟、1 小时、24 小时或 7 天的下载链接。可复制链接并查看到期时间。
+
+### 设置与排障
+
+- **下载设置**：选择默认保存目录、并发数和本地同名处理方式。配置、任务和断点保存在当前用户目录中。
+- **连接诊断**：连接失败时，核对桶名、服务商 Endpoint、Region 和密钥权限。R2 上传和复制需要对象读取及写入权限。
+- **问题报告**：侧栏可导出诊断 ZIP。提交问题时请附系统、版本、复现步骤及诊断文件。[反馈问题](https://github.com/Jerryzjy/S3-File-Manager/issues)
 
 ## 开源
 
